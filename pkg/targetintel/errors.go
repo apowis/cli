@@ -17,13 +17,12 @@ import (
 	"github.com/vulncheck-oss/cli/internal/errs"
 )
 
-// ErrReadOnly is returned when the dry run reports anything but a SELECT.
+// ErrReadOnly is returned for anything but a single SELECT statement.
 var ErrReadOnly = errs.Validation("only SELECT statements are allowed; DML, DDL and scripts are rejected")
 
 // CostLimitError is returned when BigQuery aborted the job because it would
 // have billed more than the cap. Nothing was billed.
 type CostLimitError struct {
-	Estimate   Estimate
 	MaxCostUSD float64
 	// RequiredBytes is the bytes-billed cap BigQuery reported as sufficient,
 	// zero when it did not say.
@@ -44,10 +43,6 @@ func (e *CostLimitError) Classified() *errs.Error {
 	} else {
 		hint += ", or raise --max-cost"
 	}
-	if e.Estimate.BytesProcessed > 0 {
-		hint += fmt.Sprintf("; the dry run estimated %s", humanBytes(e.Estimate.BytesProcessed))
-	}
-
 	return errs.Wrap(errs.KindCostLimit, e, "%s", e.Error()).WithHint("%s.", hint)
 }
 
@@ -56,9 +51,9 @@ func (e *CostLimitError) Classified() *errs.Error {
 var bytesBilledRequired = regexp.MustCompile(`(\d+) or higher required`)
 
 // costLimitFromJob recognises BigQuery's bytes-billed abort and converts it
-// into a CostLimitError carrying the estimate and the limit; any other error
-// is returned unchanged.
-func costLimitFromJob(err error, est Estimate, opts QueryOptions) error {
+// into a CostLimitError carrying the limit; any other error is returned
+// unchanged.
+func costLimitFromJob(err error, opts QueryOptions) error {
 	var berr *bigquery.Error
 	var gerr *googleapi.Error
 	var msg string
@@ -77,7 +72,7 @@ func costLimitFromJob(err error, est Estimate, opts QueryOptions) error {
 	default:
 		return err
 	}
-	e := &CostLimitError{Estimate: est, MaxCostUSD: opts.MaxCostUSD, PricePerTiB: opts.PricePerTiB}
+	e := &CostLimitError{MaxCostUSD: opts.MaxCostUSD, PricePerTiB: opts.PricePerTiB}
 	if m := bytesBilledRequired.FindStringSubmatch(msg); m != nil {
 		e.RequiredBytes, _ = strconv.ParseInt(m[1], 10, 64)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -49,7 +50,6 @@ type Column struct {
 // Result is a completed query with up to Limit rows materialised.
 type Result struct {
 	JobID        string           `json:"job_id"`
-	Estimate     Estimate         `json:"estimate"`
 	BytesBilled  int64            `json:"bytes_billed"`
 	CostUSD      float64          `json:"cost_usd"`
 	CacheHit     bool             `json:"cache_hit"`
@@ -100,27 +100,22 @@ func (c *Client) DryRun(ctx context.Context, opts QueryOptions) (*Estimate, erro
 	return e, nil
 }
 
-// Run dry-runs the query for the estimate and the read-only check, then runs
-// it under a bytes-billed cap and reads up to opts.Limit rows. The estimate
-// is informational: BigQuery's dry run cannot see cluster pruning, so it
-// overstates a clustered lookup by orders of magnitude, while the cap is
+// Run runs the query under a bytes-billed cap and reads up to opts.Limit
+// rows. There is no dry run: BigQuery's estimate cannot see cluster pruning
+// and overstates a clustered lookup by orders of magnitude, while the cap is
 // enforced against the bytes actually read and a job over it fails free.
+// Only SELECT statements are accepted.
 func (c *Client) Run(ctx context.Context, opts QueryOptions) (*Result, error) {
-	est, err := c.DryRun(ctx, opts)
-	if err != nil {
-		return nil, err
-	}
-	if !strings.EqualFold(est.StatementType, "SELECT") {
+	if !IsSelect(opts.SQL) {
 		return nil, ErrReadOnly
 	}
-
 	q := c.newQuery(opts)
 	if opts.MaxCostUSD > 0 {
 		q.MaxBytesBilled = max(int64(opts.MaxCostUSD/opts.PricePerTiB*tib), minMaxBytesBilled)
 	}
 	job, err := q.Run(ctx)
 	if err != nil {
-		return nil, classify(costLimitFromJob(err, *est, opts))
+		return nil, classify(costLimitFromJob(err, opts))
 	}
 
 	// A cancelled context must also cancel the job, or an abandoned query
@@ -139,13 +134,13 @@ func (c *Client) Run(ctx context.Context, opts QueryOptions) (*Result, error) {
 
 	status, err := job.Wait(ctx)
 	if err != nil {
-		return nil, classify(costLimitFromJob(err, *est, opts))
+		return nil, classify(costLimitFromJob(err, opts))
 	}
 	if err := status.Err(); err != nil {
-		return nil, classify(costLimitFromJob(err, *est, opts))
+		return nil, classify(costLimitFromJob(err, opts))
 	}
 
-	res := &Result{JobID: job.ID(), Estimate: *est}
+	res := &Result{JobID: job.ID()}
 	if status.Statistics != nil {
 		if qs, ok := status.Statistics.Details.(*bigquery.QueryStatistics); ok && qs != nil {
 			res.BytesBilled = qs.TotalBytesBilled
@@ -224,4 +219,32 @@ func FormatCost(usd float64) string {
 // FormatBytes renders a byte count for humans.
 func FormatBytes(b int64) string {
 	return humanBytes(b)
+}
+
+var (
+	lineComment  = regexp.MustCompile(`(?m)--[^\n]*|#[^\n]*`)
+	blockComment = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	leadingWord  = regexp.MustCompile(`^[\s(]*([A-Za-z]+)`)
+)
+
+// IsSelect reports whether the statement is a single SELECT (or WITH ...
+// SELECT) once comments are stripped. It is a guard against handing DML, DDL
+// or scripts to the warehouse, not a parser: a statement it accepts still
+// runs under the credential's own permissions.
+func IsSelect(sql string) bool {
+	s := blockComment.ReplaceAllString(sql, " ")
+	s = lineComment.ReplaceAllString(s, " ")
+	m := leadingWord.FindStringSubmatch(s)
+	if m == nil {
+		return false
+	}
+	switch strings.ToUpper(m[1]) {
+	case "SELECT", "WITH":
+	default:
+		return false
+	}
+	// A script is several statements; a trailing semicolon alone is fine.
+	body := strings.TrimRight(strings.TrimSpace(s), ";")
+
+	return !strings.Contains(body, ";")
 }

@@ -28,13 +28,12 @@ func TestCost(t *testing.T) {
 
 func TestCostLimitErrorClassified(t *testing.T) {
 	t.Parallel()
-	e := (&CostLimitError{Estimate: Estimate{BytesProcessed: 2605959446528, CostUSD: 14.82}, MaxCostUSD: 1, RequiredBytes: 3 << 30, PricePerTiB: 6.25}).Classified()
+	e := (&CostLimitError{MaxCostUSD: 1, RequiredBytes: 3 << 30, PricePerTiB: 6.25}).Classified()
 	assert.Equal(t, errs.KindCostLimit, e.Kind)
 	assert.Equal(t, 7, e.ExitCode())
 	assert.Equal(t, "query exceeded max cost $1.00", e.Message)
 	assert.Contains(t, e.Hint, "--max-cost 0.02")
 	assert.Contains(t, e.Hint, "3.00 GiB billed")
-	assert.Contains(t, e.Hint, "estimated 2.37 TiB")
 
 	var cost *CostLimitError
 	require.True(t, errors.As(e, &cost), "the cause survives wrapping")
@@ -43,22 +42,20 @@ func TestCostLimitErrorClassified(t *testing.T) {
 func TestCostLimitFromJob(t *testing.T) {
 	t.Parallel()
 	opts := QueryOptions{MaxCostUSD: 1, PricePerTiB: 6.25}
-	est := Estimate{BytesProcessed: 1 << 40}
 
 	berr := &bigquery.Error{Reason: "bytesBilledLimitExceeded", Message: "Query exceeded limit for bytes billed: 10485760. 3221225472 or higher required."}
-	err := costLimitFromJob(berr, est, opts)
+	err := costLimitFromJob(berr, opts)
 	var cost *CostLimitError
 	require.True(t, errors.As(err, &cost))
 	assert.Equal(t, int64(3221225472), cost.RequiredBytes)
-	assert.Equal(t, est, cost.Estimate)
 
 	gerr := &googleapi.Error{Code: 400, Errors: []googleapi.ErrorItem{{Reason: "bytesBilledLimitExceeded", Message: "Query exceeded limit for bytes billed: 10485760."}}}
-	err = costLimitFromJob(gerr, est, opts)
+	err = costLimitFromJob(gerr, opts)
 	require.True(t, errors.As(err, &cost))
 	assert.Equal(t, int64(0), cost.RequiredBytes, "no required figure in the message")
 
 	other := &bigquery.Error{Reason: "invalidQuery", Message: "syntax error"}
-	assert.Equal(t, other, costLimitFromJob(other, est, opts), "other job errors pass through")
+	assert.Equal(t, other, costLimitFromJob(other, opts), "other job errors pass through")
 	assert.Equal(t, errs.KindCostLimit, classify(err).(*errs.Error).Kind)
 }
 
@@ -152,4 +149,33 @@ func TestClassifyTokenRefreshErrors(t *testing.T) {
 	// falls through to the root classifier.
 	plain := &url.Error{Op: "Get", URL: "https://example", Err: errors.New("connection refused")}
 	assert.Equal(t, plain, classify(plain))
+}
+
+func TestIsSelect(t *testing.T) {
+	t.Parallel()
+	ok := []string{
+		"SELECT 1",
+		"  select ip FROM t;",
+		"WITH a AS (SELECT 1) SELECT * FROM a",
+		"-- note\nSELECT 1",
+		"/* block */ SELECT 1 -- trailing ; in a comment",
+		"(SELECT 1)",
+		"SELECT * FROM `p.d.observations_by_cves`(@cves, 20, 30)",
+	}
+	for _, sql := range ok {
+		assert.True(t, IsSelect(sql), sql)
+	}
+	bad := []string{
+		"",
+		"DELETE FROM t",
+		"INSERT INTO t SELECT 1",
+		"CREATE TABLE t AS SELECT 1",
+		"SELECT 1; DELETE FROM t",
+		"DECLARE x INT64; SELECT x",
+		"CALL p()",
+		"/* SELECT */ DROP TABLE t",
+	}
+	for _, sql := range bad {
+		assert.False(t, IsSelect(sql), sql)
+	}
 }

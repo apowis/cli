@@ -177,7 +177,7 @@ func queryCommand() *cobra.Command {
 	f.bind(cmd)
 	cmd.Flags().IntVar(&limit, "limit", 100, "Max rows to return. Does not reduce bytes scanned; add LIMIT/WHERE in SQL to cut cost")
 	cmd.Flags().BoolVar(&all, "all", false, "Return all rows (ignores --limit)")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the estimate and exit without running the query")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print a free dry-run estimate and exit without running the query")
 
 	return cmd
 }
@@ -196,9 +196,8 @@ func runAndRender(cmd *cobra.Command, c *targetintel.Client, opts targetintel.Qu
 		return r.JSON(resultPayload{SchemaVersion: output.SchemaVersion, Extra: extra, Result: res})
 	}
 
-	r.Info("Estimated %s (%s), billed %s%s, %d of %d rows%s",
-		targetintel.FormatCost(res.Estimate.CostUSD), targetintel.FormatBytes(res.Estimate.BytesProcessed),
-		targetintel.FormatCost(res.CostUSD), capNote(opts), res.ReturnedRows, res.TotalRows, truncatedNote(res))
+	r.Info("Billed %s (%s%s), %d of %d rows%s",
+		targetintel.FormatCost(res.CostUSD), targetintel.FormatBytes(res.BytesBilled), capNote(opts), res.ReturnedRows, res.TotalRows, truncatedNote(res))
 
 	return renderRows(cmd, res, textColumns)
 }
@@ -242,7 +241,7 @@ func capNote(opts targetintel.QueryOptions) string {
 		return ""
 	}
 
-	return " (cap " + targetintel.FormatCost(opts.MaxCostUSD) + ")"
+	return ", cap " + targetintel.FormatCost(opts.MaxCostUSD)
 }
 
 func truncatedNote(res *targetintel.Result) string {
@@ -304,7 +303,7 @@ func renderEstimate(cmd *cobra.Command, c *targetintel.Client, opts targetintel.
 	case within:
 		r.Stat("Max cost", targetintel.FormatCost(opts.MaxCostUSD)+" (within limit)")
 	default:
-		r.Warn("The estimate exceeds the max cost %s. The job still runs under that cap and fails free if it really bills that much; the dry run cannot see cluster pruning, so a clustered lookup usually bills far less.", targetintel.FormatCost(opts.MaxCostUSD))
+		r.Warn("The estimate exceeds the max cost %s. The query would still run under that cap and fail free if it really billed that much; the dry run cannot see cluster pruning, so a clustered lookup usually bills far less.", targetintel.FormatCost(opts.MaxCostUSD))
 	}
 
 	return nil
