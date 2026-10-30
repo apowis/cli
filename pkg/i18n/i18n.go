@@ -88,6 +88,7 @@ type Copy struct {
 
 	TargetIntelShort               string
 	TargetIntelLong                string
+	TargetIntelExample             string
 	TargetIntelAuthShort           string
 	TargetIntelAuthLoginShort      string
 	TargetIntelAuthLoginLong       string
@@ -314,6 +315,18 @@ var En = Copy{
 		Authenticate with a Google account using "target-intel auth login", or set
 		VC_TI_CREDENTIALS to a service-account key file.
 	`),
+	TargetIntelExample: heredoc.Doc(`
+		$ vulncheck target-intel auth login
+		$ vulncheck target-intel datasets list
+		$ vulncheck target-intel tables describe anchorbreaker_prod.timeline
+		$ vulncheck target-intel cves --cves CVE-2024-6387 --days 30
+		$ vulncheck target-intel cves --cves CVE-2024-6387 --counts
+		$ vulncheck target-intel cves --top --kev
+		$ vulncheck target-intel product --product netscaler --group-by version
+		$ vulncheck target-intel host 1.2.3.4
+		$ vulncheck target-intel estimate --from-file big-join.sql
+		$ vulncheck target-intel query --limit 10 --query "SELECT ip, port FROM anchorbreaker_prod.timeline WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 DAY) LIMIT 10"
+	`),
 	TargetIntelAuthShort:           "Manage Target Intelligence (Google) credentials",
 	TargetIntelAuthLoginShort:      "Authenticate to the Target Intelligence warehouse with a Google account",
 	TargetIntelAuthLoginLong:       "Opens a browser to sign in with Google, the same way gcloud auth login does, and stores a refresh token in the config directory. Use --no-browser to print the URL instead, for a machine without a browser.",
@@ -341,7 +354,7 @@ var En = Copy{
 		the bytes scanned: put LIMIT and WHERE clauses in the SQL to cut cost.
 	`),
 	TargetIntelQueryExample: heredoc.Doc(`
-		$ vulncheck target-intel query --limit 10 --query "SELECT ip, port FROM anchorbreaker_views_prod.timeline WHERE snapshot_date = CURRENT_DATE() LIMIT 10"
+		$ vulncheck target-intel query --limit 10 --query "SELECT ip, port FROM anchorbreaker_prod.timeline WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 DAY) LIMIT 10"
 		$ vulncheck ti query --from-file ./query.sql --all --json > rows.json
 		$ vulncheck ti query --max-cost 10 --from-file big-join.sql
 		$ vulncheck ti query --dry-run --from-file big-join.sql

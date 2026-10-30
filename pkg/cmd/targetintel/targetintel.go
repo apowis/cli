@@ -5,7 +5,6 @@ package targetintel
 import (
 	"fmt"
 
-	"github.com/MakeNowJust/heredoc/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/vulncheck-oss/cli/internal/errs"
@@ -24,15 +23,7 @@ func Command() *cobra.Command {
 		GroupID: "core",
 		Args:    validArgs(cobra.NoArgs),
 		RunE:    groupRunE,
-		Example: heredoc.Doc(`
-			$ vulncheck target-intel auth login
-			$ vulncheck target-intel datasets list
-			$ vulncheck target-intel tables describe anchorbreaker_views_prod.timeline
-			$ vulncheck target-intel cves --cves CVE-2024-6387 --days 30
-			$ vulncheck target-intel product --product netscaler --group-by version
-			$ vulncheck target-intel host 1.2.3.4
-			$ vulncheck target-intel query --limit 10 --query "SELECT ip, port FROM anchorbreaker_views_prod.timeline WHERE ..."
-		`),
+		Example: i18n.C.TargetIntelExample,
 	}
 
 	// Target Intelligence authenticates with Google, not a VulnCheck API
