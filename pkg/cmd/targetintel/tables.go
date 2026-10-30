@@ -39,7 +39,7 @@ func tablesListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c, err := targetintel.NewClient(cmd.Context(), s)
+			c, err := newClient(cmd.Context(), s)
 			if err != nil {
 				return err
 			}
@@ -52,7 +52,7 @@ func tablesListCommand() *cobra.Command {
 			if r.IsJSON() {
 				return r.JSON(tables)
 			}
-			r.Info("%d tables in %s.%s", len(tables), ref.Project, ref.Dataset)
+			r.Info("%s in %s.%s", countNoun(len(tables), "table"), ref.Project, ref.Dataset)
 			rows := make([][]string, 0, len(tables))
 			for _, t := range tables {
 				rows = append(rows, []string{t.Table})
@@ -79,7 +79,7 @@ func tablesDescribeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c, err := targetintel.NewClient(cmd.Context(), s)
+			c, err := newClient(cmd.Context(), s)
 			if err != nil {
 				return err
 			}

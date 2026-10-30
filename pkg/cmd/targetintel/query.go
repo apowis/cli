@@ -257,7 +257,7 @@ func queryCommand() *cobra.Command {
 				return err
 			}
 
-			c, err := targetintel.NewClient(cmd.Context(), s)
+			c, err := newClient(cmd.Context(), s)
 			if err != nil {
 				return err
 			}
@@ -364,7 +364,7 @@ func estimateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c, err := targetintel.NewClient(cmd.Context(), s)
+			c, err := newClient(cmd.Context(), s)
 			if err != nil {
 				return err
 			}

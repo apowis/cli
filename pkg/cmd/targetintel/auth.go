@@ -32,6 +32,10 @@ type loginPayload struct {
 	Location        string `json:"location"`
 }
 
+// login runs the browser OAuth flow. It is a variable so tests can stub the
+// flow and exercise the command's validation and config handling.
+var login = targetintel.Login
+
 func loginCommand() *cobra.Command {
 	var noBrowser bool
 	cmd := &cobra.Command{
@@ -64,7 +68,7 @@ func loginCommand() *cobra.Command {
 			if !noBrowser {
 				opts.OpenBrowser = browser.OpenURL
 			}
-			res, err := targetintel.Login(cmd.Context(), opts)
+			res, err := login(cmd.Context(), opts)
 			if err != nil {
 				return err
 			}

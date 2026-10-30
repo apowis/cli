@@ -3,6 +3,8 @@
 package targetintel
 
 import (
+	"fmt"
+
 	"github.com/MakeNowJust/heredoc/v2"
 	"github.com/spf13/cobra"
 
@@ -60,6 +62,10 @@ func Command() *cobra.Command {
 	return cmd
 }
 
+// newClient resolves credentials and opens the BigQuery client. It is a
+// variable so tests can point the commands at a fake BigQuery server.
+var newClient = targetintel.NewClient
+
 // settingsFromCmd resolves Settings from the persistent flags plus any
 // per-command overrides.
 func settingsFromCmd(cmd *cobra.Command, o targetintel.Overrides) (targetintel.Settings, error) {
@@ -98,4 +104,13 @@ func validArgs(check cobra.PositionalArgs) cobra.PositionalArgs {
 // With no arguments it still prints help.
 func groupRunE(cmd *cobra.Command, _ []string) error {
 	return cmd.Help()
+}
+
+// countNoun renders "1 table" or "3 tables".
+func countNoun(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+
+	return fmt.Sprintf("%d %ss", n, noun)
 }

@@ -26,7 +26,7 @@ func datasetsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c, err := targetintel.NewClient(cmd.Context(), s)
+			c, err := newClient(cmd.Context(), s)
 			if err != nil {
 				return err
 			}
@@ -39,7 +39,7 @@ func datasetsCommand() *cobra.Command {
 			if r.IsJSON() {
 				return r.JSON(datasets)
 			}
-			r.Info("%d datasets in %s", len(datasets), c.Settings.Project)
+			r.Info("%s in %s", countNoun(len(datasets), "dataset"), c.Settings.Project)
 			rows := make([][]string, 0, len(datasets))
 			for _, d := range datasets {
 				rows = append(rows, []string{d.Project + "." + d.Dataset})

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/vulncheck-oss/cli/internal/errs"
 	"github.com/vulncheck-oss/cli/internal/output"
 	"github.com/vulncheck-oss/cli/pkg/targetintel"
 )
@@ -42,7 +43,8 @@ func TestReadSQL(t *testing.T) {
 		t.Parallel()
 		f := queryFlags{sql: "SELECT 1", fromFile: "x.sql"}
 		_, err := f.readSQL(testCmd(t, true), strings.NewReader(""))
-		require.Error(t, err)
+		require.ErrorContains(t, err, "--query and --from-file are mutually exclusive")
+		assert.Equal(t, errs.KindValidation, errs.Classify(err).Kind)
 	})
 
 	t.Run("from file", func(t *testing.T) {
@@ -107,7 +109,8 @@ func TestReadSQL(t *testing.T) {
 		t.Parallel()
 		f := queryFlags{}
 		_, err := f.readSQL(testCmd(t, true), strings.NewReader("SELECT 5"))
-		require.Error(t, err, "must not read a terminal's stdin")
+		require.ErrorContains(t, err, "no SQL given", "must not read a terminal's stdin")
+		assert.Equal(t, errs.KindValidation, errs.Classify(err).Kind)
 	})
 }
 

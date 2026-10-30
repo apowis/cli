@@ -18,9 +18,15 @@ func TestParseHostIP(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1.2.3.4", got, "an IPv4-mapped address is IPv4")
 
-	for _, bad := range []string{"", "example.com", "1.2.3", "2001:db8::1"} {
+	for bad, msg := range map[string]string{
+		"":            "is required",
+		"example.com": "is not an IP address",
+		"1.2.3":       "is not an IP address",
+		"2001:db8::1": "is IPv6",
+	} {
 		_, err := ParseHostIP(bad)
-		require.Error(t, err, bad)
+		requireValidation(t, err, bad)
+		assert.ErrorContains(t, err, msg, bad)
 	}
 }
 
@@ -42,9 +48,11 @@ func TestHostQueries(t *testing.T) {
 	assert.Equal(t, int64(30), params[1].Value)
 
 	_, _, err = s.HostFingerprints(HostQuery{IP: "1.2.3.4"})
-	require.Error(t, err)
+	requireValidation(t, err)
+	assert.ErrorContains(t, err, "--days must be at least 1")
 	_, _, err = s.HostProfile(HostQuery{IP: "nope"})
-	require.Error(t, err)
+	requireValidation(t, err)
+	assert.ErrorContains(t, err, `"nope" is not an IP address`)
 }
 
 func TestParseHostTarget(t *testing.T) {
@@ -61,9 +69,16 @@ func TestParseHostTarget(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "10.0.0.0/16", q.CIDR)
 
-	for _, bad := range []string{"10.0.0.0/8", "10.0.0.0/15", "2001:db8::/32", "10.0.0.0/33", "x/24"} {
+	for bad, msg := range map[string]string{
+		"10.0.0.0/8":    "wider than /16",
+		"10.0.0.0/15":   "wider than /16",
+		"2001:db8::/32": "is IPv6",
+		"10.0.0.0/33":   "is not a CIDR range",
+		"x/24":          "is not a CIDR range",
+	} {
 		_, err := ParseHostTarget(bad)
-		require.Error(t, err, bad)
+		requireValidation(t, err, bad)
+		assert.ErrorContains(t, err, msg, bad)
 	}
 }
 
@@ -81,7 +96,8 @@ func TestHostRange(t *testing.T) {
 	assert.Equal(t, int64(30), params[2].Value)
 
 	_, _, err = s.HostRange(HostQuery{CIDR: "81.82.248.0/24"})
-	require.Error(t, err)
+	requireValidation(t, err)
+	assert.ErrorContains(t, err, "--days must be at least 1")
 }
 
 // requireValidation asserts err is a validation error, the kind that exits 2.

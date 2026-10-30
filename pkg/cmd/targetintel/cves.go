@@ -67,7 +67,7 @@ func cvesCommand() *cobra.Command {
 					return err
 				}
 				opts.SQL, opts.Params = sql, params
-				c, err := targetintel.NewClient(cmd.Context(), s)
+				c, err := newClient(cmd.Context(), s)
 				if err != nil {
 					return err
 				}
@@ -90,7 +90,7 @@ func cvesCommand() *cobra.Command {
 				// is bounded by len(ids). Fetch every row: a --limit cut would
 				// report the CVEs past it as missing.
 				opts.Limit = 0
-				c, err := targetintel.NewClient(cmd.Context(), s)
+				c, err := newClient(cmd.Context(), s)
 				if err != nil {
 					return err
 				}
@@ -123,7 +123,7 @@ func cvesCommand() *cobra.Command {
 			}
 			opts.SQL, opts.Params = sql, params
 
-			c, err := targetintel.NewClient(cmd.Context(), s)
+			c, err := newClient(cmd.Context(), s)
 			if err != nil {
 				return err
 			}

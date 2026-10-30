@@ -16,9 +16,11 @@ func TestNormalizeCVEs(t *testing.T) {
 	assert.Equal(t, []string{"CVE-2024-6387", "CVE-2024-3400"}, got)
 
 	_, err = NormalizeCVEs([]string{"2024-6387"})
-	require.Error(t, err)
+	requireValidation(t, err)
+	assert.ErrorContains(t, err, `"2024-6387" is not a CVE id`)
 	_, err = NormalizeCVEs(nil)
-	require.Error(t, err)
+	requireValidation(t, err)
+	assert.ErrorContains(t, err, "at least one CVE id is required")
 }
 
 func TestObservationsByCVEs(t *testing.T) {
@@ -33,9 +35,11 @@ func TestObservationsByCVEs(t *testing.T) {
 	assert.Equal(t, int64(30), params[2].Value)
 
 	_, _, err = s.ObservationsByCVEs(CVEQuery{CVEs: []string{"CVE-2024-6387"}, MinConfidence: 25, LookbackDays: 30})
-	require.Error(t, err)
+	requireValidation(t, err)
+	assert.ErrorContains(t, err, "--min-confidence must be one of 10, 20, 30 or 40")
 	_, _, err = s.ObservationsByCVEs(CVEQuery{CVEs: []string{"CVE-2024-6387"}, MinConfidence: 20, LookbackDays: 0})
-	require.Error(t, err)
+	requireValidation(t, err)
+	assert.ErrorContains(t, err, "--days must be at least 1")
 }
 
 func TestNormalizeCVEsInputs(t *testing.T) {

@@ -69,7 +69,7 @@ func hostCommand() *cobra.Command {
 				if opts.Limit, err = rowLimit(limit, all); err != nil {
 					return err
 				}
-				c, err := targetintel.NewClient(cmd.Context(), s)
+				c, err := newClient(cmd.Context(), s)
 				if err != nil {
 					return err
 				}
@@ -92,7 +92,7 @@ func hostCommand() *cobra.Command {
 				return err
 			}
 
-			c, err := targetintel.NewClient(cmd.Context(), s)
+			c, err := newClient(cmd.Context(), s)
 			if err != nil {
 				return err
 			}

@@ -24,9 +24,11 @@ func TestObservationsByProduct(t *testing.T) {
 	assert.Equal(t, bigquery.NullString{}, params[0].Value, "an empty filter is passed as NULL")
 
 	_, _, err = s.ObservationsByProduct(ProductQuery{LookbackDays: 30})
-	require.Error(t, err, "one filter is required")
+	requireValidation(t, err, "one filter is required")
+	assert.ErrorContains(t, err, "at least one of --vendor or --product is required")
 	_, _, err = s.ObservationsByProduct(ProductQuery{Vendor: "x", LookbackDays: 0})
-	require.Error(t, err)
+	requireValidation(t, err)
+	assert.ErrorContains(t, err, "--days must be at least 1")
 }
 
 func TestGroupBy(t *testing.T) {
@@ -42,7 +44,8 @@ func TestGroupBy(t *testing.T) {
 	assert.Contains(t, sql, "GROUP BY matched_cve_id, vendor, product, version")
 
 	_, err = GroupBy("x", "hostname")
-	require.Error(t, err)
+	requireValidation(t, err)
+	assert.ErrorContains(t, err, "--group-by must be one of asn, country, product, version")
 	assert.Equal(t, []string{"asn", "country", "product", "version"}, GroupByKeys())
 }
 
@@ -70,7 +73,8 @@ func TestCVELeaderboard(t *testing.T) {
 	assert.NotContains(t, sql, "kev_in_catalog ORDER")
 
 	_, _, err = s.CVELeaderboard(TopCVEs{MinEPSS: 1.5})
-	require.Error(t, err)
+	requireValidation(t, err)
+	assert.ErrorContains(t, err, "--min-epss must be between 0 and 1")
 }
 
 func TestObservationsByProductPatterns(t *testing.T) {

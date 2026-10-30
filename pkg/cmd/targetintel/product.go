@@ -49,7 +49,7 @@ func productCommand() *cobra.Command {
 			}
 			opts.SQL, opts.Params = sql, params
 
-			c, err := targetintel.NewClient(cmd.Context(), s)
+			c, err := newClient(cmd.Context(), s)
 			if err != nil {
 				return err
 			}
