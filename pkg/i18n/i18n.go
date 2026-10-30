@@ -415,10 +415,19 @@ var En = Copy{
 		lists rule-annotated CVEs only; version-range exposure for a CVE is
 		what "cves" answers. --json returns {query, found, profile,
 		fingerprints, jobs}.
+
+		A CIDR of /16 or longer returns an inventory instead: one row per
+		host seen listening in the range, with its services and the distinct
+		products identified within the lookback window, in address order.
+		The range filter prunes on the host clustering, so a /16 bills well
+		under 1 GiB. --limit caps the hosts returned; --json returns the
+		"query" payload shape plus the echoed query.
 	`),
 	TargetIntelHostExample: heredoc.Doc(`
 		$ vulncheck ti host 112.173.82.65
 		$ vulncheck ti host 112.173.82.65 --days 90 --json
+		$ vulncheck ti host 81.82.248.0/24
+		$ vulncheck ti host 81.82.0.0/16 --all --json > hosts.json
 		$ vulncheck ti host 112.173.82.65 --dry-run
 	`),
 

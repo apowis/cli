@@ -1,6 +1,7 @@
 package targetintel
 
 import (
+	"encoding/binary"
 	"net"
 	"strings"
 
@@ -9,10 +10,59 @@ import (
 	"github.com/vulncheck-oss/cli/internal/errs"
 )
 
-// HostQuery describes a host lookup.
+// MaxHostPrefix is the shortest prefix a range lookup accepts.
+const MaxHostPrefix = 16
+
+// HostQuery describes a host lookup: one IP, or a CIDR range.
 type HostQuery struct {
-	IP           string `json:"ip"`
+	IP           string `json:"ip,omitempty"`
+	CIDR         string `json:"cidr,omitempty"`
 	LookbackDays int    `json:"lookback_days"`
+}
+
+// ParseHostTarget accepts an IPv4 address or an IPv4 CIDR of /16 or
+// longer and returns the query for it. A CIDR is normalised to its
+// network address.
+func ParseHostTarget(s string) (HostQuery, error) {
+	s = strings.TrimSpace(s)
+	if !strings.Contains(s, "/") {
+		ip, err := ParseHostIP(s)
+		if err != nil {
+			return HostQuery{}, err
+		}
+
+		return HostQuery{IP: ip}, nil
+	}
+	_, ipnet, err := net.ParseCIDR(s)
+	if err != nil {
+		return HostQuery{}, errs.Validation("%q is not a CIDR range", s)
+	}
+	if ipnet.IP.To4() == nil {
+		return HostQuery{}, errs.Validation("%s is IPv6; host lookups support IPv4 only", s)
+	}
+	ones, _ := ipnet.Mask.Size()
+	if ones < MaxHostPrefix {
+		return HostQuery{}, errs.Validation("%s is wider than /%d; narrow the range", s, MaxHostPrefix)
+	}
+
+	return HostQuery{CIDR: ipnet.String()}, nil
+}
+
+// cidrBounds returns the first and last ip_int of an IPv4 CIDR.
+func cidrBounds(cidr string) (int64, int64, error) {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return 0, 0, errs.Validation("%q is not a CIDR range", cidr)
+	}
+	v4 := ipnet.IP.To4()
+	if v4 == nil {
+		return 0, 0, errs.Validation("%s is IPv6; host lookups support IPv4 only", cidr)
+	}
+	lo := int64(binary.BigEndian.Uint32(v4))
+	ones, bits := ipnet.Mask.Size()
+	hi := lo + int64(1)<<uint(bits-ones) - 1
+
+	return lo, hi, nil
 }
 
 // ParseHostIP validates and normalises the IP a host lookup takes. Only
@@ -77,6 +127,49 @@ func (s Settings) HostFingerprints(q HostQuery) (string, []bigquery.QueryParamet
 		" ORDER BY port, vendor, product"
 	params := []bigquery.QueryParameter{
 		{Name: "ip", Value: ip},
+		{Name: "lookback_days", Value: int64(q.LookbackDays)},
+	}
+
+	return sql, params, nil
+}
+
+// HostRangeColumns are the columns HostRange selects, in order.
+var HostRangeColumns = []string{"ip", "country_code", "asn", "as_name", "last_seen", "port_count", "services", "products"}
+
+// HostRange builds the inventory of every host seen listening in a CIDR:
+// one row per host with its services (port/transport service) and the
+// distinct products identified within the lookback window. Both tables
+// are clustered on ip_int, so the range filter prunes to the block; a /16
+// bills well under 1 GiB.
+func (s Settings) HostRange(q HostQuery) (string, []bigquery.QueryParameter, error) {
+	lo, hi, err := cidrBounds(q.CIDR)
+	if err != nil {
+		return "", nil, err
+	}
+	if q.LookbackDays <= 0 {
+		return "", nil, errs.Validation("--days must be at least 1")
+	}
+	const label = "TRIM(CONCAT(COALESCE(vendor, ''), ' ', COALESCE(product, ''), ' ', COALESCE(version, '')))"
+	sql := "WITH h AS (" +
+		" SELECT ip_int, ip, ipgeo_hash, last_seen, port_count, services" +
+		" FROM " + s.Table("host_profile") +
+		" WHERE ip_int BETWEEN @lo AND @hi" +
+		"), f AS (" +
+		" SELECT ip_int, ARRAY_AGG(DISTINCT " + label + " ORDER BY " + label + ") AS products" +
+		" FROM " + s.Table("fingerprint_current") +
+		" WHERE ip_int BETWEEN @lo AND @hi" +
+		" AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @lookback_days DAY)" +
+		" GROUP BY ip_int" +
+		") SELECT NET.IP_TO_STRING(h.ip) AS ip, g.country_code, g.asn, g.as_name, h.last_seen, h.port_count," +
+		" ARRAY(SELECT CONCAT(CAST(sv.port AS STRING), '/', COALESCE(sv.transport, 'unknown'), ' ', sv.service) FROM UNNEST(h.services) AS sv) AS services," +
+		" COALESCE(f.products, []) AS products" +
+		" FROM h" +
+		" LEFT JOIN " + s.Table("ipgeo_snapshot") + " AS g ON g.snapshot_hash = h.ipgeo_hash" +
+		" LEFT JOIN f USING (ip_int)" +
+		" ORDER BY h.ip_int"
+	params := []bigquery.QueryParameter{
+		{Name: "lo", Value: lo},
+		{Name: "hi", Value: hi},
 		{Name: "lookback_days", Value: int64(q.LookbackDays)},
 	}
 

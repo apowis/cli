@@ -44,3 +44,39 @@ func TestHostQueries(t *testing.T) {
 	_, _, err = s.HostProfile(HostQuery{IP: "nope"})
 	require.Error(t, err)
 }
+
+func TestParseHostTarget(t *testing.T) {
+	t.Parallel()
+	q, err := ParseHostTarget("1.2.3.4")
+	require.NoError(t, err)
+	assert.Equal(t, HostQuery{IP: "1.2.3.4"}, q)
+
+	q, err = ParseHostTarget("81.82.248.77/24")
+	require.NoError(t, err)
+	assert.Equal(t, HostQuery{CIDR: "81.82.248.0/24"}, q, "a CIDR is normalised to its network")
+
+	q, err = ParseHostTarget("10.0.0.0/16")
+	require.NoError(t, err)
+	assert.Equal(t, "10.0.0.0/16", q.CIDR)
+
+	for _, bad := range []string{"10.0.0.0/8", "10.0.0.0/15", "2001:db8::/32", "10.0.0.0/33", "x/24"} {
+		_, err := ParseHostTarget(bad)
+		require.Error(t, err, bad)
+	}
+}
+
+func TestHostRange(t *testing.T) {
+	t.Parallel()
+	s := Settings{Project: "p", Dataset: "d"}
+	sql, params, err := s.HostRange(HostQuery{CIDR: "81.82.248.0/24", LookbackDays: 30})
+	require.NoError(t, err)
+	assert.Contains(t, sql, "FROM `p.d.host_profile` WHERE ip_int BETWEEN @lo AND @hi")
+	assert.Contains(t, sql, "FROM `p.d.fingerprint_current` WHERE ip_int BETWEEN @lo AND @hi")
+	require.Len(t, params, 3)
+	assert.Equal(t, int64(81<<24|82<<16|248<<8), params[0].Value)
+	assert.Equal(t, int64(81<<24|82<<16|248<<8|255), params[1].Value)
+	assert.Equal(t, int64(30), params[2].Value)
+
+	_, _, err = s.HostRange(HostQuery{CIDR: "81.82.248.0/24"})
+	require.Error(t, err)
+}

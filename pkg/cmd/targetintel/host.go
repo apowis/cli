@@ -2,6 +2,7 @@ package targetintel
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -30,24 +31,48 @@ type hostPayload struct {
 	Jobs          []hostJob             `json:"jobs"`
 }
 
+// rangeTextColumns is the column set of the one-row-per-host inventory.
+var rangeTextColumns = []string{"ip", "country_code", "asn", "last_seen", "port_count", "services", "products"}
+
 func hostCommand() *cobra.Command {
 	var f queryFlags
-	var days int
-	var dryRun bool
+	var days, limit int
+	var all, dryRun bool
 
 	cmd := &cobra.Command{
-		Use:     "host <ipv4> [--days <n>]",
+		Use:     "host <ipv4|cidr> [--days <n>]",
 		Short:   i18n.C.TargetIntelHostShort,
 		Long:    i18n.C.TargetIntelHostLong,
 		Example: i18n.C.TargetIntelHostExample,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ip, err := targetintel.ParseHostIP(args[0])
+			q, err := targetintel.ParseHostTarget(args[0])
 			if err != nil {
 				return err
 			}
-			q := targetintel.HostQuery{IP: ip, LookbackDays: days}
+			q.LookbackDays = days
 			s, base := f.options(cmd, "")
+
+			if q.CIDR != "" {
+				opts := base
+				opts.SQL, opts.Params, err = s.HostRange(q)
+				if err != nil {
+					return err
+				}
+				if !all {
+					opts.Limit = limit
+				}
+				c, err := targetintel.NewClient(cmd.Context(), s)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = c.Close() }()
+				if dryRun {
+					return renderEstimate(cmd, c, opts)
+				}
+
+				return runRange(cmd, c, opts, q)
+			}
 
 			profile := base
 			profile.SQL, profile.Params, err = s.HostProfile(q)
@@ -110,6 +135,8 @@ func hostCommand() *cobra.Command {
 	}
 	f.bindCommon(cmd)
 	cmd.Flags().IntVar(&days, "days", 30, "Lookback window in days for fingerprints")
+	cmd.Flags().IntVar(&limit, "limit", 100, "Max hosts to return for a CIDR range")
+	cmd.Flags().BoolVar(&all, "all", false, "Return every host in the range (ignores --limit)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the estimates and exit without running the lookups")
 
 	return cmd
@@ -170,4 +197,45 @@ func serviceRows(v any) [][]string {
 	}
 
 	return rows
+}
+
+// runRange renders the one-row-per-host inventory of a CIDR. Arrays are
+// joined with commas in text mode; --json keeps them as arrays.
+func runRange(cmd *cobra.Command, c *targetintel.Client, opts targetintel.QueryOptions, q targetintel.HostQuery) error {
+	r := output.FromCmd(cmd)
+	res, err := c.Run(cmd.Context(), opts)
+	if err != nil {
+		return err
+	}
+	if r.IsJSON() {
+		return r.JSON(resultPayload{SchemaVersion: output.SchemaVersion, Extra: map[string]any{"query": q}, Result: res})
+	}
+	r.Info("Estimated %s (%s), billed %s, %d of %d hosts%s",
+		targetintel.FormatCost(res.Estimate.CostUSD), targetintel.FormatBytes(res.Estimate.BytesProcessed),
+		targetintel.FormatCost(res.CostUSD), res.ReturnedRows, res.TotalRows, truncatedNote(res))
+	if res.TotalRows == 0 {
+		r.Warn("No host in %s was seen listening on any port in the current scan window.", q.CIDR)
+
+		return nil
+	}
+	for _, row := range res.Rows {
+		row["services"] = joinStrings(row["services"])
+		row["products"] = joinStrings(row["products"])
+	}
+
+	return renderRows(cmd, res, rangeTextColumns)
+}
+
+// joinStrings renders an array of strings as a comma-separated cell.
+func joinStrings(v any) any {
+	items, ok := v.([]any)
+	if !ok {
+		return v
+	}
+	parts := make([]string, 0, len(items))
+	for _, it := range items {
+		parts = append(parts, targetintel.CellString(it))
+	}
+
+	return strings.Join(parts, ", ")
 }
