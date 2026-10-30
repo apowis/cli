@@ -20,6 +20,9 @@ const (
 	DefaultLocation = "europe-west1"
 	// DefaultViewsDataset holds the customer-facing routines (observations_by_*).
 	DefaultViewsDataset = "anchorbreaker_views_prod"
+	// DefaultDataset holds the warehouse tables the host and counts commands
+	// read directly (host_profile, fingerprint_current, cve_host_counts).
+	DefaultDataset = "anchorbreaker_prod"
 	// DefaultMaxCostUSD is the per-invocation spend limit.
 	DefaultMaxCostUSD = 1.00
 	// DefaultPricePerTiB is BigQuery's on-demand analysis price.
@@ -28,6 +31,7 @@ const (
 	EnvProject      = "VC_TI_PROJECT"
 	EnvLocation     = "VC_TI_LOCATION"
 	EnvViewsDataset = "VC_TI_VIEWS_DATASET"
+	EnvDataset      = "VC_TI_DATASET"
 	EnvMaxCost      = "VC_TI_MAX_COST"
 	EnvPricePerTiB  = "VC_TI_PRICE_PER_TIB"
 	// EnvCredentials points at a Google credentials JSON file (service account
@@ -41,6 +45,7 @@ type Settings struct {
 	Project      string
 	Location     string
 	ViewsDataset string
+	Dataset      string
 	MaxCostUSD   float64
 	PricePerTiB  float64
 
@@ -56,12 +61,19 @@ func (s Settings) ViewsRoutine(name string) string {
 	return "`" + s.Project + "." + s.ViewsDataset + "." + name + "`"
 }
 
+// Table returns the fully qualified name of a table or view in the warehouse
+// dataset, ready to be used in SQL.
+func (s Settings) Table(name string) string {
+	return "`" + s.Project + "." + s.Dataset + "." + name + "`"
+}
+
 // Overrides carries values set explicitly on the command line. Empty or zero
 // means "not set".
 type Overrides struct {
 	Project      string
 	Location     string
 	ViewsDataset string
+	Dataset      string
 	MaxCostUSD   *float64
 	PricePerTiB  *float64
 }
@@ -75,6 +87,7 @@ func ResolveSettings(o Overrides) Settings {
 	s.Project, s.ProjectSource = pick(o.Project, os.Getenv(EnvProject), stored.Project, DefaultProject)
 	s.Location, s.LocationSource = pick(o.Location, os.Getenv(EnvLocation), stored.Location, DefaultLocation)
 	s.ViewsDataset, _ = pick(o.ViewsDataset, os.Getenv(EnvViewsDataset), stored.ViewsDataset, DefaultViewsDataset)
+	s.Dataset, _ = pick(o.Dataset, os.Getenv(EnvDataset), stored.Dataset, DefaultDataset)
 
 	switch {
 	case o.MaxCostUSD != nil:

@@ -200,6 +200,13 @@ func runAndRender(cmd *cobra.Command, c *targetintel.Client, opts targetintel.Qu
 		targetintel.FormatCost(res.Estimate.CostUSD), targetintel.FormatBytes(res.Estimate.BytesProcessed),
 		targetintel.FormatCost(res.CostUSD), res.ReturnedRows, res.TotalRows, truncatedNote(res))
 
+	return renderRows(cmd, res, textColumns)
+}
+
+// renderRows prints the result as a text table of textColumns, or of every
+// column when nil.
+func renderRows(cmd *cobra.Command, res *targetintel.Result, textColumns []string) error {
+	r := output.FromCmd(cmd)
 	headers := textColumns
 	if headers == nil {
 		headers = make([]string, 0, len(res.Schema))
@@ -207,20 +214,26 @@ func runAndRender(cmd *cobra.Command, c *targetintel.Client, opts targetintel.Qu
 			headers = append(headers, col.Name)
 		}
 	}
-	rows := make([][]string, 0, len(res.Rows))
-	for _, row := range res.Rows {
-		cells := make([]string, 0, len(headers))
-		for _, h := range headers {
-			cells = append(cells, targetintel.CellString(row[h]))
-		}
-		rows = append(rows, cells)
-	}
-	r.Println(ui.Table(headers, rows))
+	r.Println(rowTable(headers, res.Rows))
 	if textColumns != nil {
 		r.Info("Showing %d of %d columns; use --json for every field", len(textColumns), len(res.Schema))
 	}
 
 	return nil
+}
+
+// rowTable renders the named columns of each row as a table.
+func rowTable(headers []string, rows []map[string]any) string {
+	cells := make([][]string, 0, len(rows))
+	for _, row := range rows {
+		line := make([]string, 0, len(headers))
+		for _, h := range headers {
+			line = append(line, targetintel.CellString(row[h]))
+		}
+		cells = append(cells, line)
+	}
+
+	return ui.Table(headers, cells)
 }
 
 func truncatedNote(res *targetintel.Result) string {

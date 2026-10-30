@@ -107,6 +107,12 @@ type Copy struct {
 	TargetIntelCvesShort           string
 	TargetIntelCvesLong            string
 	TargetIntelCvesExample         string
+	TargetIntelProductShort        string
+	TargetIntelProductLong         string
+	TargetIntelProductExample      string
+	TargetIntelHostShort           string
+	TargetIntelHostLong            string
+	TargetIntelHostExample         string
 
 	BackupShort            string
 	BackupLong             string
@@ -356,12 +362,64 @@ var En = Copy{
 		whose NVD CPE mapping changed since the snapshot was built, are matched
 		live and scan more. --max-cost applies exactly as for "query".
 		Text mode shows a compact column set; --json returns every column.
+
+		--group-by rolls the rows up to distinct hosts per country, asn,
+		product or version (per matched CVE when several are given). --counts
+		skips the routine and reads the nightly cve_host_counts table instead:
+		hosts over the last 30 days split by tier, KEV and EPSS, and the top
+		countries, for a fraction of a cent.
 	`),
 	TargetIntelCvesExample: heredoc.Doc(`
 		$ vulncheck ti cves --cves CVE-2024-6387 --days 30
 		$ vulncheck ti cves --cves CVE-2024-6387,CVE-2024-3400 --min-confidence 30 --json
 		$ vulncheck ti cves --cves CVE-2024-3400 --all --json > hosts.json
 		$ vulncheck ti cves --cves CVE-2024-6387 --dry-run
+		$ vulncheck ti cves --cves CVE-2024-6387 --group-by country
+		$ vulncheck ti cves --cves CVE-2024-6387,CVE-2024-3400 --counts
+	`),
+	TargetIntelProductShort: "Hosts running a product or vendor (observations_by_product)",
+	TargetIntelProductLong: heredoc.Doc(`
+		Calls the observations_by_product routine: every host seen in the
+		lookback window whose fingerprint matches the vendor and product
+		patterns. Both are case-insensitive substring matches unless you pass
+		an explicit LIKE pattern with %. The vendor pattern is also matched
+		against the product name, so --vendor netscaler works when you do not
+		know the vendor. At least one pattern is required.
+
+		Rows carry the host's product, version, CPE, rule confidence,
+		distro_packaged (likely or possibly, when the product ships as a
+		distribution package), geolocation and ASN. A 30-day call dry-runs at
+		about 63 GiB ($0.38) and bills what it estimates. --group-by rolls the
+		rows up to distinct hosts per country, asn, product or version and
+		reads fewer columns, about 36 GiB ($0.22). --max-cost applies exactly
+		as for "query". Text mode shows a compact column set; --json returns
+		every column.
+	`),
+	TargetIntelProductExample: heredoc.Doc(`
+		$ vulncheck ti product --vendor citrix --product netscaler
+		$ vulncheck ti product --product netscaler --group-by version
+		$ vulncheck ti product --vendor fortinet --days 7 --group-by country --json
+		$ vulncheck ti product --product "mini_httpd" --all --json > hosts.json
+	`),
+	TargetIntelHostShort: "What one host is running: listening ports, geolocation and current fingerprints",
+	TargetIntelHostLong: heredoc.Doc(`
+		Looks one IPv4 address up in two point reads: host_profile for the
+		ports and protocols seen listening in the current scan window, with
+		geolocation and ASN, and fingerprint_current for every product
+		identified in the host's most recent scan of each port within the
+		lookback window. Both tables are clustered on the host, so a lookup
+		bills well under 1 GiB.
+
+		Ports are those observed listening, bounded by what we probed: an
+		absent port means not seen listening, never closed. The cves column
+		lists rule-annotated CVEs only; version-range exposure for a CVE is
+		what "cves" answers. --json returns {query, found, profile,
+		fingerprints, jobs}.
+	`),
+	TargetIntelHostExample: heredoc.Doc(`
+		$ vulncheck ti host 112.173.82.65
+		$ vulncheck ti host 112.173.82.65 --days 90 --json
+		$ vulncheck ti host 112.173.82.65 --dry-run
 	`),
 
 	NvdShort:            "Query the NVD API 2.0 compatible endpoints (api /rest/json)",

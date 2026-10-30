@@ -28,6 +28,7 @@ type TargetIntelConfig struct {
 	Project      string `mapstructure:"project"`
 	Location     string `mapstructure:"location"`
 	ViewsDataset string `mapstructure:"views_dataset"`
+	Dataset      string `mapstructure:"dataset"`
 }
 
 func Init() {
@@ -80,6 +81,7 @@ func saveConfig(config *Config) error {
 	v.Set("TargetIntel.project", config.TargetIntel.Project)
 	v.Set("TargetIntel.location", config.TargetIntel.Location)
 	v.Set("TargetIntel.views_dataset", config.TargetIntel.ViewsDataset)
+	v.Set("TargetIntel.dataset", config.TargetIntel.Dataset)
 	return v.WriteConfigAs(fmt.Sprintf("%s/vulncheck.yaml", dir))
 }
 

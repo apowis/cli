@@ -65,3 +65,26 @@ func (s Settings) ObservationsByCVEs(q CVEQuery) (string, []bigquery.QueryParame
 
 	return sql, params, nil
 }
+
+// CVEHostCountsColumns are the columns CVEHostCounts selects, in order.
+var CVEHostCountsColumns = []string{
+	"cve_id", "hosts", "hosts_confirmed", "hosts_unconfirmed",
+	"hosts_40", "hosts_30", "hosts_20", "hosts_10",
+	"rule_derived_hosts", "cpe_derived_hosts",
+	"epss_score", "epss_percentile",
+	"kev_in_catalog", "kev_known_ransomware_use", "kev_vulncheck_exploitation",
+	"top_countries",
+}
+
+// CVEHostCounts reads the nightly cve_host_counts aggregate for the given
+// CVEs: hosts exposing each one over the last 30 days, split by confidence
+// tier, with the KEV and EPSS signals and the top countries. The table is
+// clustered on cve_id, so this is a point lookup. A CVE no tier reaches has
+// no row.
+func (s Settings) CVEHostCounts(cves []string) (string, []bigquery.QueryParameter) {
+	sql := "SELECT " + strings.Join(CVEHostCountsColumns, ", ") +
+		" FROM " + s.Table("cve_host_counts") +
+		" WHERE cve_id IN UNNEST(@cves) ORDER BY hosts DESC, cve_id"
+
+	return sql, []bigquery.QueryParameter{{Name: "cves", Value: cves}}
+}
