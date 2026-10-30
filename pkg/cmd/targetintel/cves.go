@@ -22,26 +22,50 @@ func cvesCommand() *cobra.Command {
 	var f queryFlags
 	var cves []string
 	var days, minConfidence, limit int
-	var all, dryRun, counts bool
+	var all, dryRun, counts, top, kev bool
+	var minEPSS float64
 	var groupBy string
 
 	cmd := &cobra.Command{
-		Use:     "cves --cves <id>[,<id>...] [--days <n>] [--min-confidence <10|20|30|40>] [--group-by <key> | --counts]",
+		Use:     "cves (--cves <id>[,<id>...] [--days <n>] [--min-confidence <10|20|30|40>] [--group-by <key> | --counts]) | (--top [--kev] [--min-epss <0-1>])",
 		Short:   i18n.C.TargetIntelCvesShort,
 		Long:    i18n.C.TargetIntelCvesLong,
 		Example: i18n.C.TargetIntelCvesExample,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ids, err := targetintel.NormalizeCVEs(cves)
-			if err != nil {
-				return err
-			}
 			if counts && groupBy != "" {
 				return errs.Validation("--counts and --group-by are mutually exclusive")
+			}
+			if top && (len(cves) > 0 || counts || groupBy != "") {
+				return errs.Validation("--top takes no --cves, --counts or --group-by")
 			}
 			s, opts := f.options(cmd, "")
 			if !all {
 				opts.Limit = limit
+			}
+
+			if top {
+				t := targetintel.TopCVEs{KEVOnly: kev, MinEPSS: minEPSS}
+				sql, params, err := s.CVELeaderboard(t)
+				if err != nil {
+					return err
+				}
+				opts.SQL, opts.Params = sql, params
+				c, err := targetintel.NewClient(cmd.Context(), s)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = c.Close() }()
+				if dryRun {
+					return renderEstimate(cmd, c, opts)
+				}
+
+				return runCounts(cmd, c, opts, nil, map[string]any{"top": t})
+			}
+
+			ids, err := targetintel.NormalizeCVEs(cves)
+			if err != nil {
+				return err
 			}
 
 			if counts {
@@ -55,7 +79,7 @@ func cvesCommand() *cobra.Command {
 					return renderEstimate(cmd, c, opts)
 				}
 
-				return runCounts(cmd, c, opts, ids)
+				return runCounts(cmd, c, opts, ids, map[string]any{"cves": ids})
 			}
 
 			q := targetintel.CVEQuery{CVEs: ids, MinConfidence: minConfidence, LookbackDays: days}
@@ -93,12 +117,14 @@ func cvesCommand() *cobra.Command {
 		},
 	}
 	f.bindCommon(cmd)
-	cmd.Flags().StringSliceVar(&cves, "cves", nil, "CVE ids, comma-separated or repeated (required)")
-	_ = cmd.MarkFlagRequired("cves")
+	cmd.Flags().StringSliceVar(&cves, "cves", nil, "CVE ids, comma-separated or repeated (required unless --top)")
 	cmd.Flags().IntVar(&days, "days", 30, "Lookback window in days")
 	cmd.Flags().IntVar(&minConfidence, "min-confidence", 20, "Minimum confidence tier: 40, 30, 20 (default) or 10 (adds versionless product matches)")
 	cmd.Flags().StringVar(&groupBy, "group-by", "", "Roll hosts up by "+strings.Join(targetintel.GroupByKeys(), ", ")+" instead of listing observations")
 	cmd.Flags().BoolVar(&counts, "counts", false, "Read the nightly per-CVE host counts (30-day window, split by tier) instead of calling the routine; near-free")
+	cmd.Flags().BoolVar(&top, "top", false, "Leaderboard: every CVE by exposed hosts over the last 30 days, most first; near-free")
+	cmd.Flags().BoolVar(&kev, "kev", false, "With --top: only CVEs in the VulnCheck KEV catalog")
+	cmd.Flags().Float64Var(&minEPSS, "min-epss", 0, "With --top: only CVEs with an EPSS score at or above this (0 to 1)")
 	cmd.Flags().IntVar(&limit, "limit", 100, "Max rows to return. Does not reduce bytes scanned")
 	cmd.Flags().BoolVar(&all, "all", false, "Return all rows (ignores --limit)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the estimate and exit without running the query")
@@ -108,7 +134,7 @@ func cvesCommand() *cobra.Command {
 
 // runCounts renders the cve_host_counts lookup and names any requested CVE
 // that has no row, so an absent CVE is never mistaken for zero hosts.
-func runCounts(cmd *cobra.Command, c *targetintel.Client, opts targetintel.QueryOptions, ids []string) error {
+func runCounts(cmd *cobra.Command, c *targetintel.Client, opts targetintel.QueryOptions, ids []string, query map[string]any) error {
 	r := output.FromCmd(cmd)
 	res, err := c.Run(cmd.Context(), opts)
 	if err != nil {
@@ -126,9 +152,15 @@ func runCounts(cmd *cobra.Command, c *targetintel.Client, opts targetintel.Query
 			missing = append(missing, id)
 		}
 	}
-	extra := map[string]any{"table": "cve_host_counts", "query": map[string]any{"cves": ids}, "missing": missing}
+	extra := map[string]any{"table": "cve_host_counts", "query": query}
+	if ids != nil {
+		extra["missing"] = missing
+	}
 	if r.IsJSON() {
 		return r.JSON(resultPayload{SchemaVersion: output.SchemaVersion, Extra: extra, Result: res})
+	}
+	if ids == nil {
+		r.Info("%d of %d CVEs%s", res.ReturnedRows, res.TotalRows, truncatedNote(res))
 	}
 	for _, row := range res.Rows {
 		row["top_countries"] = compactCountries(row["top_countries"])

@@ -55,3 +55,20 @@ func TestCVEHostCounts(t *testing.T) {
 	require.Len(t, params, 1)
 	assert.Equal(t, []string{"CVE-2024-6387"}, params[0].Value)
 }
+
+func TestCVELeaderboard(t *testing.T) {
+	t.Parallel()
+	s := Settings{Project: "p", Dataset: "d"}
+	sql, params, err := s.CVELeaderboard(TopCVEs{KEVOnly: true, MinEPSS: 0.5})
+	require.NoError(t, err)
+	assert.Contains(t, sql, "FROM `p.d.cve_host_counts` WHERE hosts > 0 AND epss_score >= @min_epss AND kev_in_catalog ORDER BY hosts DESC, cve_id")
+	require.Len(t, params, 1)
+	assert.Equal(t, 0.5, params[0].Value)
+
+	sql, _, err = s.CVELeaderboard(TopCVEs{})
+	require.NoError(t, err)
+	assert.NotContains(t, sql, "kev_in_catalog ORDER")
+
+	_, _, err = s.CVELeaderboard(TopCVEs{MinEPSS: 1.5})
+	require.Error(t, err)
+}

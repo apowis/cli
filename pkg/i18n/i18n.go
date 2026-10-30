@@ -367,7 +367,9 @@ var En = Copy{
 		product or version (per matched CVE when several are given). --counts
 		skips the routine and reads the nightly cve_host_counts table instead:
 		hosts over the last 30 days split by tier, KEV and EPSS, and the top
-		countries, for a fraction of a cent.
+		countries, for a fraction of a cent. --top reads the same table as a
+		leaderboard: every CVE by exposed hosts, most first, optionally only
+		KEV entries (--kev) or above an EPSS floor (--min-epss).
 	`),
 	TargetIntelCvesExample: heredoc.Doc(`
 		$ vulncheck ti cves --cves CVE-2024-6387 --days 30
@@ -376,6 +378,7 @@ var En = Copy{
 		$ vulncheck ti cves --cves CVE-2024-6387 --dry-run
 		$ vulncheck ti cves --cves CVE-2024-6387 --group-by country
 		$ vulncheck ti cves --cves CVE-2024-6387,CVE-2024-3400 --counts
+		$ vulncheck ti cves --top --kev --limit 10
 	`),
 	TargetIntelProductShort: "Hosts running a product or vendor (observations_by_product)",
 	TargetIntelProductLong: heredoc.Doc(`

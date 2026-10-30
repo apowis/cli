@@ -38,7 +38,7 @@ func NormalizeCVEs(in []string) ([]string, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, errs.Validation("at least one CVE id is required (--cves CVE-2024-6387)")
+		return nil, errs.Validation("at least one CVE id is required (--cves CVE-2024-6387), or --top for a leaderboard")
 	}
 
 	return out, nil
@@ -87,4 +87,28 @@ func (s Settings) CVEHostCounts(cves []string) (string, []bigquery.QueryParamete
 		" WHERE cve_id IN UNNEST(@cves) ORDER BY hosts DESC, cve_id"
 
 	return sql, []bigquery.QueryParameter{{Name: "cves", Value: cves}}
+}
+
+// TopCVEs describes a cve_host_counts leaderboard.
+type TopCVEs struct {
+	KEVOnly bool    `json:"kev_only"`
+	MinEPSS float64 `json:"min_epss"`
+}
+
+// CVELeaderboard reads cve_host_counts ordered by exposed hosts, most first,
+// optionally limited to VulnCheck KEV entries and to an EPSS floor. CVEs
+// with only tier-10 hosts are left out, since their hosts column is zero.
+func (s Settings) CVELeaderboard(t TopCVEs) (string, []bigquery.QueryParameter, error) {
+	if t.MinEPSS < 0 || t.MinEPSS > 1 {
+		return "", nil, errs.Validation("--min-epss must be between 0 and 1")
+	}
+	sql := "SELECT " + strings.Join(CVEHostCountsColumns, ", ") +
+		" FROM " + s.Table("cve_host_counts") +
+		" WHERE hosts > 0 AND epss_score >= @min_epss"
+	if t.KEVOnly {
+		sql += " AND kev_in_catalog"
+	}
+	sql += " ORDER BY hosts DESC, cve_id"
+
+	return sql, []bigquery.QueryParameter{{Name: "min_epss", Value: t.MinEPSS}}, nil
 }
