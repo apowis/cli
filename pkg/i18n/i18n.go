@@ -86,6 +86,25 @@ type Copy struct {
 	NvdNextCursor       string
 	NvdFlagFullResponse string
 
+	TargetIntelShort               string
+	TargetIntelLong                string
+	TargetIntelAuthShort           string
+	TargetIntelAuthLoginShort      string
+	TargetIntelAuthLoginLong       string
+	TargetIntelAuthLoginErrorCI    string
+	TargetIntelAuthLogoutShort     string
+	TargetIntelAuthStatusShort     string
+	TargetIntelDatasetsShort       string
+	TargetIntelDatasetsListShort   string
+	TargetIntelTablesShort         string
+	TargetIntelTablesListShort     string
+	TargetIntelTablesDescribeShort string
+	TargetIntelQueryShort          string
+	TargetIntelQueryLong           string
+	TargetIntelQueryExample        string
+	TargetIntelEstimateShort       string
+	TargetIntelEstimateLong        string
+
 	BackupShort            string
 	BackupLong             string
 	BackupListShort        string
@@ -272,6 +291,51 @@ var En = Copy{
 	AdvisoryListShort:   "List advisory records (GET /v4/advisory)",
 	AdvisoryBrowseShort: "Browse advisory records interactively (GET /v4/advisory)",
 	AdvisoryFound:       "%d of %d advisory records",
+
+	TargetIntelShort: "Query VulnCheck Target Intelligence scan data in BigQuery",
+	TargetIntelLong: heredoc.Doc(`
+		Query VulnCheck Target Intelligence data in BigQuery.
+
+		Every query runs a free dry run first to estimate its cost. A query whose
+		estimate exceeds the max cost (default $1.00) is refused before any bytes
+		are billed; override per invocation with --max-cost or VC_TI_MAX_COST.
+
+		Authenticate with a Google account using "target-intel auth login", or set
+		VC_TI_CREDENTIALS to a service-account key file.
+	`),
+	TargetIntelAuthShort:           "Manage Target Intelligence (Google) credentials",
+	TargetIntelAuthLoginShort:      "Authenticate to the Target Intelligence warehouse with a Google account",
+	TargetIntelAuthLoginLong:       "Opens a browser to sign in with Google, the same way gcloud auth login does, and stores a refresh token in the config directory. Use --no-browser to print the URL instead, for a machine without a browser.",
+	TargetIntelAuthLoginErrorCI:    "This command is interactive and cannot be run in a CI environment; set VC_TI_CREDENTIALS to a service-account key file, or pass --no-browser and complete the login from another machine",
+	TargetIntelAuthLogoutShort:     "Remove stored Target Intelligence credentials",
+	TargetIntelAuthStatusShort:     "Show the credential source, principal, billing project and cost limit",
+	TargetIntelDatasetsShort:       "List available datasets",
+	TargetIntelDatasetsListShort:   "List the datasets in the billing project",
+	TargetIntelTablesShort:         "List and describe tables",
+	TargetIntelTablesListShort:     "List the tables and views in a dataset",
+	TargetIntelTablesDescribeShort: "Show a table's schema, size, partition and cluster keys (free)",
+	TargetIntelQueryShort:          "Run a read-only SQL query (dry run and cost check first)",
+	TargetIntelQueryLong: heredoc.Doc(`
+		Run a read-only SQL query against Target Intelligence.
+
+		Before execution the CLI performs a BigQuery dry run to learn how many
+		bytes the query scans and converts that to an estimated USD cost. If the
+		estimate exceeds --max-cost the query is NOT run and the command exits 7
+		(cost_limit_exceeded). The same limit is sent to BigQuery as
+		maximumBytesBilled, so a job can never bill past the cap even if the
+		estimate is wrong.
+
+		Only SELECT statements are allowed. --limit caps the rows returned, not
+		the bytes scanned: put LIMIT and WHERE clauses in the SQL to cut cost.
+	`),
+	TargetIntelQueryExample: heredoc.Doc(`
+		$ vulncheck target-intel query --limit 10 --query "SELECT ip, port FROM anchorbreaker_views_prod.timeline WHERE snapshot_date = CURRENT_DATE() LIMIT 10"
+		$ vulncheck ti query --from-file ./query.sql --all --json > rows.json
+		$ vulncheck ti query --max-cost 10 --from-file big-join.sql
+		$ vulncheck ti query --dry-run --from-file big-join.sql
+	`),
+	TargetIntelEstimateShort: "Estimate a query's cost without running it (free)",
+	TargetIntelEstimateLong:  "Dry-runs the SQL and reports bytes scanned and estimated on-demand cost. Nothing is billed.",
 
 	NvdShort:            "Query the NVD API 2.0 compatible endpoints (api /rest/json)",
 	NvdCvesShort:        "Search CVEs (GET /rest/json/cves/2.0)",

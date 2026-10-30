@@ -32,6 +32,7 @@ import (
 	"github.com/vulncheck-oss/cli/pkg/cmd/rule"
 	"github.com/vulncheck-oss/cli/pkg/cmd/scan"
 	"github.com/vulncheck-oss/cli/pkg/cmd/tag"
+	"github.com/vulncheck-oss/cli/pkg/cmd/targetintel"
 	"github.com/vulncheck-oss/cli/pkg/cmd/version"
 	"github.com/vulncheck-oss/cli/pkg/config"
 	"github.com/vulncheck-oss/cli/pkg/environment"
@@ -114,6 +115,7 @@ func NewCmdRoot() *cobra.Command {
 	cmd.AddCommand(tag.Command())
 	cmd.AddCommand(pdns.Command())
 	cmd.AddCommand(offline.Command())
+	cmd.AddCommand(targetintel.Command())
 
 	return cmd
 }

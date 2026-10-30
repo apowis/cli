@@ -306,3 +306,20 @@ func SingleColumnResults(results []string, title string) error {
 	fmt.Println(t)
 	return nil
 }
+
+// Table renders a bordered table to a string. Width follows the terminal when
+// there is one; otherwise the table takes the width of its content.
+func Table(headers []string, rows [][]string) string {
+	t := ltable.New().
+		Border(lipgloss.NormalBorder()).
+		BorderStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("#6667ab"))).
+		Headers(headers...)
+	if w := TermWidth(); w > 0 {
+		t = t.Width(w)
+	}
+	for _, row := range rows {
+		t.Row(row...)
+	}
+
+	return t.String()
+}

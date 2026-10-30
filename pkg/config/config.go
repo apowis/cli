@@ -18,6 +18,15 @@ type Environment struct {
 type Config struct {
 	Token      string
 	IndicesDir string
+	// TargetIntel holds the saved defaults for `vulncheck target-intel`.
+	TargetIntel TargetIntelConfig
+}
+
+// TargetIntelConfig is the targetintel block of vulncheck.yaml. Every field
+// is optional; an empty value falls through to the environment or default.
+type TargetIntelConfig struct {
+	Project  string `mapstructure:"project"`
+	Location string `mapstructure:"location"`
 }
 
 func Init() {
@@ -67,6 +76,8 @@ func saveConfig(config *Config) error {
 	v.SetConfigPermissions(0600)
 	v.Set("Token", config.Token)
 	v.Set("IndicesDir", config.IndicesDir)
+	v.Set("TargetIntel.project", config.TargetIntel.Project)
+	v.Set("TargetIntel.location", config.TargetIntel.Location)
 	return v.WriteConfigAs(fmt.Sprintf("%s/vulncheck.yaml", dir))
 }
 
@@ -125,6 +136,23 @@ func IndicesDir() (string, error) {
 		return "", fmt.Errorf("failed to create indices directory: %w", err)
 	}
 	return dir, nil
+}
+
+// TargetIntel returns the saved target-intel defaults, or the zero value when
+// there is no config file.
+func TargetIntel() TargetIntelConfig {
+	config, err := loadConfig()
+	if err != nil {
+		return TargetIntelConfig{}
+	}
+
+	return config.TargetIntel
+}
+
+// SetTargetIntel saves the target-intel defaults, preserving every other
+// setting.
+func SetTargetIntel(ti TargetIntelConfig) error {
+	return mutateConfig(func(c *Config) { c.TargetIntel = ti })
 }
 
 func SetIndicesDir(dir string) error {

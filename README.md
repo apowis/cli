@@ -101,6 +101,11 @@ The CLI is designed to be safe to drive from scripts and AI agents. This section
 | `VC_TOKEN`                                 | Legacy alias, still fully supported and **taking precedence over `VULNCHECK_API_TOKEN` when both are set**, so no existing setup changes credential. Clear both to fall back to the config file. `auth status` reports which is in use. |
 | `NO_COLOR`                                 | Any non-empty value disables ANSI styling. |
 | `CI` / `BUILD_NUMBER` / `RUN_ID`           | Any of these set implies non-interactive mode (no prompts). |
+| `VC_TI_PROJECT`                            | GCP billing project for `target-intel` (flag `--project` wins; then this; then the `targetintel.project` saved by `target-intel auth login`; default `viewport-473910`). |
+| `VC_TI_LOCATION`                           | BigQuery location for `target-intel` (default `europe-west1`). Same precedence as the project. |
+| `VC_TI_CREDENTIALS`                        | Path to a Google credentials JSON file (service-account key or `authorized_user`). Takes precedence over the stored `target-intel auth login` credential and Application Default Credentials; while set, `target-intel auth login` refuses. |
+| `VC_TI_MAX_COST`                           | Default per-query cost limit in USD for `target-intel query` (flag `--max-cost` wins; built-in default `1.00`; `0` disables the limit). |
+| `VC_TI_PRICE_PER_TIB`                      | On-demand price used to turn bytes into dollars (default `6.25`). |
 
 ### Exit codes
 
@@ -113,6 +118,7 @@ The CLI is designed to be safe to drive from scripts and AI agents. This section
 | 4    | Resource not found (HTTP 404, no such index). |
 | 5    | Rate limited (HTTP 429). |
 | 6    | Network failure (DNS, connection refused, timeout). |
+| 7    | Cost limit exceeded (`target-intel query` refused before anything was billed). |
 | 130  | Cancelled by SIGINT (POSIX `128 + 2`). |
 
 ### Error envelope
@@ -131,7 +137,7 @@ In `--json` mode, errors are emitted to **stdout** as:
 }
 ```
 
-`code` is one of: `internal`, `validation`, `auth_required`, `auth_invalid`, `not_found`, `rate_limited`, `network`, `bad_request`, `cancelled`. `http_status` is omitted for non-HTTP errors. `hint` is optional remediation context, present only when the message alone isn't actionable (e.g. naming the variable that supplied a rejected token). Rendered on stderr as `hint: ...` outside `--json` mode.
+`code` is one of: `internal`, `validation`, `auth_required`, `auth_invalid`, `not_found`, `rate_limited`, `network`, `bad_request`, `cost_limit_exceeded`, `cancelled`. `http_status` is omitted for non-HTTP errors. `hint` is optional remediation context, present only when the message alone isn't actionable (e.g. naming the variable that supplied a rejected token). Rendered on stderr as `hint: ...` outside `--json` mode.
 
 ### Probe commands
 
@@ -221,6 +227,7 @@ Every command below accepts the [global flags](#global-flags) (`--json`, `--quie
 - [`rule`](#rule) — look up initial-access-intelligence rules
 - [`scan`](#scan) — scan a directory (SBOM + vulnerability lookup)
 - [`offline`](#offline) — sync indices locally and query them without hitting the API
+- [`target-intel`](#target-intel) — query Target Intelligence scan data in BigQuery with a cost gate
 - [`version`](#version) — print the CLI version
 - [`upgrade`](#upgrade) — update the CLI in place
 
@@ -407,6 +414,28 @@ vulncheck offline ipintel <3d|10d|30d> [--country=...] [--asn=...] [--cidr=...] 
 ```
 
 Local queries against synced indices. `sync --json` returns `{schema_version, action, selected, elapsed_seconds}`; `status --json` returns the cached-index array. Under `--no-interactive` the sync command refuses without an explicit `--add` / `--remove` / `--purge` (no picker prompt).
+
+
+### target-intel
+
+Alias: `ti`. Queries VulnCheck Target Intelligence scan data in BigQuery. Authentication is to Google, not the VulnCheck API, so these commands do not need `VULNCHECK_API_TOKEN`.
+
+```
+vulncheck target-intel auth login   [--no-browser] [--project <id>] [--location <loc>] [--json]
+vulncheck target-intel auth logout  [--json]
+vulncheck target-intel auth status  [--json]
+vulncheck target-intel datasets list [--json]
+vulncheck target-intel tables list <dataset> [--json]
+vulncheck target-intel tables describe <dataset>.<table> [--json]
+vulncheck target-intel estimate [--query <sql> | --from-file <path>] [--max-cost <usd>] [--json]
+vulncheck target-intel query    [--query <sql> | --from-file <path>] [--limit <n>|--all] [--max-cost <usd>] [--dry-run] [--no-cache] [--timeout <d>] [--json]
+```
+
+`auth login` runs the same browser flow as `gcloud auth login` (loopback redirect, PKCE) and stores a refresh token in `~/.config/vulncheck/target-intel-credentials.json` (mode 0600, Google `authorized_user` format). It also saves the billing project and location to `vulncheck.yaml` so later invocations need no flags. Credential precedence: `VC_TI_CREDENTIALS`, then the stored login, then Application Default Credentials. `auth status --json` always exits 0 and returns `{schema_version, authenticated, credential_source, principal, project, project_source, location, location_source, max_cost_usd, reason}`.
+
+Every `query` runs a free dry run first. If the estimated on-demand cost exceeds `--max-cost` (default $1.00) the query is **not run**, nothing is billed, and the command exits 7 with error code `cost_limit_exceeded`; the hint names the `--max-cost` value that would allow it. The same cap is sent to BigQuery as `maximumBytesBilled`, so a job can never bill past it even if the estimate is wrong. Only `SELECT` statements are allowed. `--limit` caps rows returned, not bytes scanned: put `WHERE`/`LIMIT` in the SQL to cut cost. SQL comes from `--query`, `--from-file` (`-` for stdin), or piped stdin.
+
+`query --json` returns `{schema_version, job_id, estimate: {bytes_processed, cost_usd, statement_type}, bytes_billed, cost_usd, cache_hit, total_rows, returned_rows, truncated, schema: [{name, type, mode}], rows: [{...}]}`. Timestamps are RFC 3339, `BYTES` columns are base64, `NUMERIC` values are decimal strings. `estimate --json` (and `query --dry-run --json`) returns `{schema_version, estimate, max_cost_usd, within_limit}`. `tables describe --json` returns the schema plus size, row count, partition and clustering keys and the cost of a full scan; it is free, so use it before writing SQL.
 
 
 ### version

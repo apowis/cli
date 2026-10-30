@@ -43,6 +43,9 @@ const (
 	// KindCancelled means the user (or a parent process) sent SIGINT/SIGTERM
 	// or cancelled the context. Exit 130 to match POSIX (128 + SIGINT).
 	KindCancelled Kind = "cancelled"
+	// KindCostLimit means a query's estimated cost exceeded the caller's
+	// limit, so it was refused before anything was billed. Exit 7.
+	KindCostLimit Kind = "cost_limit_exceeded"
 )
 
 // ExitCode is the stable process exit code mapped to a Kind.
@@ -58,6 +61,8 @@ func (k Kind) ExitCode() int {
 		return 5
 	case KindNetwork:
 		return 6
+	case KindCostLimit:
+		return 7
 	case KindCancelled:
 		return 130
 	default:
