@@ -314,6 +314,29 @@ func TestRenderRows(t *testing.T) {
 		assert.NotContains(t, out.String(), "SSH-2.0")
 		assert.Contains(t, out.String(), "Showing 2 of 3 columns; use --json for every field")
 	})
+
+	t.Run("text columns the result lacks", func(t *testing.T) {
+		t.Parallel()
+		cmd, out, _ := bufCmd(t)
+		require.NoError(t, renderRows(cmd, res, []string{"ip", "vendor", "port", "product", "version"}))
+		assert.NotContains(t, out.String(), "vendor", "a column the result lacks is not shown")
+		assert.Contains(t, out.String(), "Showing 2 of 3 columns")
+	})
+
+	t.Run("text columns covering the schema", func(t *testing.T) {
+		t.Parallel()
+		cmd, out, _ := bufCmd(t)
+		require.NoError(t, renderRows(cmd, res, []string{"ip", "port", "banner", "extra"}))
+		assert.NotContains(t, out.String(), "Showing", "no note when every column is shown")
+	})
+
+	t.Run("no text column present", func(t *testing.T) {
+		t.Parallel()
+		cmd, out, _ := bufCmd(t)
+		require.NoError(t, renderRows(cmd, res, []string{"vendor"}))
+		assert.Contains(t, out.String(), "SSH-2.0", "falls back to every column")
+		assert.NotContains(t, out.String(), "Showing")
+	})
 }
 
 func TestCredentialSourceLabel(t *testing.T) {

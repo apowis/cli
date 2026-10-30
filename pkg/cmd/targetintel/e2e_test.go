@@ -459,7 +459,10 @@ func TestE2ECVERoutineText(t *testing.T) {
 	assert.Contains(t, stdout, billedLine(0, 1, 1, 1, false))
 	assert.Contains(t, stdout, "openssh")
 	assert.Contains(t, stdout, "matched_cve_id")
-	assert.Contains(t, stdout, fmt.Sprintf("Showing %d of %d columns; use --json for every field", len(cvesTextColumns), len(observationSchema)))
+	// The fake schema lacks some fixed text columns; only the ones present
+	// are shown and counted.
+	assert.Contains(t, stdout, "Showing 7 of 8 columns; use --json for every field")
+	assert.NotContains(t, stdout, "kev_in_catalog")
 }
 
 func TestE2ECVEGroupBy(t *testing.T) {

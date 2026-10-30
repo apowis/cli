@@ -302,19 +302,37 @@ func runAndRender(cmd *cobra.Command, c *targetintel.Client, opts targetintel.Qu
 // column when nil.
 func renderRows(cmd *cobra.Command, res *targetintel.Result, textColumns []string) error {
 	r := output.FromCmd(cmd)
-	headers := textColumns
-	if headers == nil {
-		headers = make([]string, 0, len(res.Schema))
-		for _, col := range res.Schema {
-			headers = append(headers, col.Name)
-		}
-	}
+	headers := textHeaders(res.Schema, textColumns)
 	r.Println(rowTable(headers, res.Rows))
-	if textColumns != nil {
-		r.Info("Showing %d of %d columns; use --json for every field", len(textColumns), len(res.Schema))
+	if len(headers) < len(res.Schema) {
+		r.Info("Showing %d of %d columns; use --json for every field", len(headers), len(res.Schema))
 	}
 
 	return nil
+}
+
+// textHeaders keeps the text columns the result actually has, in order, so
+// a routine that drops one shows neither an all-NULL column nor a column
+// count above the schema's. With no text columns, or none present, every
+// schema column is shown.
+func textHeaders(schema []targetintel.Column, textColumns []string) []string {
+	present := make(map[string]bool, len(schema))
+	all := make([]string, 0, len(schema))
+	for _, col := range schema {
+		present[col.Name] = true
+		all = append(all, col.Name)
+	}
+	headers := make([]string, 0, len(textColumns))
+	for _, c := range textColumns {
+		if present[c] {
+			headers = append(headers, c)
+		}
+	}
+	if len(headers) == 0 {
+		return all
+	}
+
+	return headers
 }
 
 // rowTable renders the named columns of each row as a table.
