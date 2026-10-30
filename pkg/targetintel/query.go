@@ -21,8 +21,8 @@ type QueryOptions struct {
 	SQL string
 	// Params are named query parameters referenced as @name in SQL.
 	Params []bigquery.QueryParameter
-	// MaxCostUSD refuses the query when the estimate is above it. Zero
-	// disables the limit.
+	// MaxCostUSD is sent to BigQuery as a bytes-billed cap: a job that would
+	// bill more fails before anything is charged. Zero disables the cap.
 	MaxCostUSD  float64
 	PricePerTiB float64
 	// Limit caps the rows returned to the caller; it does not change what
@@ -100,10 +100,11 @@ func (c *Client) DryRun(ctx context.Context, opts QueryOptions) (*Estimate, erro
 	return e, nil
 }
 
-// Run dry-runs the query, enforces the read-only and cost rules, then runs it
-// and reads up to opts.Limit rows. The cost limit is also sent to BigQuery as
-// maximumBytesBilled, so the job cannot bill past it even if the estimate is
-// wrong.
+// Run dry-runs the query for the estimate and the read-only check, then runs
+// it under a bytes-billed cap and reads up to opts.Limit rows. The estimate
+// is informational: BigQuery's dry run cannot see cluster pruning, so it
+// overstates a clustered lookup by orders of magnitude, while the cap is
+// enforced against the bytes actually read and a job over it fails free.
 func (c *Client) Run(ctx context.Context, opts QueryOptions) (*Result, error) {
 	est, err := c.DryRun(ctx, opts)
 	if err != nil {
@@ -112,9 +113,6 @@ func (c *Client) Run(ctx context.Context, opts QueryOptions) (*Result, error) {
 	if !strings.EqualFold(est.StatementType, "SELECT") {
 		return nil, ErrReadOnly
 	}
-	if opts.MaxCostUSD > 0 && est.CostUSD > opts.MaxCostUSD {
-		return nil, (&CostLimitError{Estimate: *est, MaxCostUSD: opts.MaxCostUSD}).Classified()
-	}
 
 	q := c.newQuery(opts)
 	if opts.MaxCostUSD > 0 {
@@ -122,7 +120,7 @@ func (c *Client) Run(ctx context.Context, opts QueryOptions) (*Result, error) {
 	}
 	job, err := q.Run(ctx)
 	if err != nil {
-		return nil, classify(err)
+		return nil, classify(costLimitFromJob(err, *est, opts))
 	}
 
 	// A cancelled context must also cancel the job, or an abandoned query
@@ -141,10 +139,10 @@ func (c *Client) Run(ctx context.Context, opts QueryOptions) (*Result, error) {
 
 	status, err := job.Wait(ctx)
 	if err != nil {
-		return nil, classify(err)
+		return nil, classify(costLimitFromJob(err, *est, opts))
 	}
 	if err := status.Err(); err != nil {
-		return nil, classify(err)
+		return nil, classify(costLimitFromJob(err, *est, opts))
 	}
 
 	res := &Result{JobID: job.ID(), Estimate: *est}

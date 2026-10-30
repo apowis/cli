@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
+	"strconv"
 
 	gauth "cloud.google.com/go/auth"
+	"cloud.google.com/go/bigquery"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/googleapi"
 
@@ -17,23 +20,69 @@ import (
 // ErrReadOnly is returned when the dry run reports anything but a SELECT.
 var ErrReadOnly = errs.Validation("only SELECT statements are allowed; DML, DDL and scripts are rejected")
 
-// CostLimitError is returned when the dry-run estimate exceeds the limit. The
-// query was not run and nothing was billed.
+// CostLimitError is returned when BigQuery aborted the job because it would
+// have billed more than the cap. Nothing was billed.
 type CostLimitError struct {
 	Estimate   Estimate
 	MaxCostUSD float64
+	// RequiredBytes is the bytes-billed cap BigQuery reported as sufficient,
+	// zero when it did not say.
+	RequiredBytes int64
+	PricePerTiB   float64
 }
 
 func (e *CostLimitError) Error() string {
-	return fmt.Sprintf("estimated cost %s exceeds max cost %s", FormatCost(e.Estimate.CostUSD), FormatCost(e.MaxCostUSD))
+	return fmt.Sprintf("query exceeded max cost %s", FormatCost(e.MaxCostUSD))
 }
 
 // Classified converts the error into the CLI's structured form so it exits 7
 // with the cost_limit_exceeded code and a hint that names the override.
 func (e *CostLimitError) Classified() *errs.Error {
-	return errs.Wrap(errs.KindCostLimit, e, "%s", e.Error()).WithHint(
-		"%s would be scanned and nothing was billed. Select only the columns you need, filter on the partition column, or re-run with --max-cost %.2f to allow this query.",
-		humanBytes(e.Estimate.BytesProcessed), ceilCost(e.Estimate.CostUSD))
+	hint := "BigQuery stopped the job before billing. Select only the columns you need, filter on the partition or cluster column"
+	if e.RequiredBytes > 0 {
+		hint += fmt.Sprintf(", or re-run with --max-cost %.2f to allow this query (%s billed)", ceilCost(cost(e.RequiredBytes, e.PricePerTiB)), humanBytes(e.RequiredBytes))
+	} else {
+		hint += ", or raise --max-cost"
+	}
+	if e.Estimate.BytesProcessed > 0 {
+		hint += fmt.Sprintf("; the dry run estimated %s", humanBytes(e.Estimate.BytesProcessed))
+	}
+
+	return errs.Wrap(errs.KindCostLimit, e, "%s", e.Error()).WithHint("%s.", hint)
+}
+
+// bytesBilledRequired parses the cap BigQuery says the job needs from its
+// "Query exceeded limit for bytes billed: X. Y or higher required." message.
+var bytesBilledRequired = regexp.MustCompile(`(\d+) or higher required`)
+
+// costLimitFromJob recognises BigQuery's bytes-billed abort and converts it
+// into a CostLimitError carrying the estimate and the limit; any other error
+// is returned unchanged.
+func costLimitFromJob(err error, est Estimate, opts QueryOptions) error {
+	var berr *bigquery.Error
+	var gerr *googleapi.Error
+	var msg string
+	switch {
+	case errors.As(err, &berr) && berr.Reason == "bytesBilledLimitExceeded":
+		msg = berr.Message
+	case errors.As(err, &gerr):
+		for _, item := range gerr.Errors {
+			if item.Reason == "bytesBilledLimitExceeded" {
+				msg = item.Message
+			}
+		}
+		if msg == "" {
+			return err
+		}
+	default:
+		return err
+	}
+	e := &CostLimitError{Estimate: est, MaxCostUSD: opts.MaxCostUSD, PricePerTiB: opts.PricePerTiB}
+	if m := bytesBilledRequired.FindStringSubmatch(msg); m != nil {
+		e.RequiredBytes, _ = strconv.ParseInt(m[1], 10, 64)
+	}
+
+	return e
 }
 
 // classify maps Google API and context errors onto the CLI's error kinds so

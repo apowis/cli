@@ -34,7 +34,7 @@ func (f *queryFlags) bind(cmd *cobra.Command) {
 // bindCommon binds the flags every query-running command shares.
 func (f *queryFlags) bindCommon(cmd *cobra.Command) {
 	cmd.Flags().Float64Var(&f.maxCost, "max-cost", targetintel.DefaultMaxCostUSD,
-		"Max estimated cost in USD before the query is refused (env: "+targetintel.EnvMaxCost+"; 0 disables the limit)")
+		"Max cost in USD billed per query, enforced by BigQuery as a bytes-billed cap: a job that would bill more fails before anything is charged (env: "+targetintel.EnvMaxCost+"; 0 disables the cap)")
 	cmd.Flags().BoolVar(&f.noCache, "no-cache", false, "Disable the BigQuery result cache")
 	cmd.Flags().DurationVar(&f.timeout, "timeout", 5*time.Minute, "Job timeout")
 }
@@ -196,9 +196,9 @@ func runAndRender(cmd *cobra.Command, c *targetintel.Client, opts targetintel.Qu
 		return r.JSON(resultPayload{SchemaVersion: output.SchemaVersion, Extra: extra, Result: res})
 	}
 
-	r.Info("Estimated %s (%s), billed %s, %d of %d rows%s",
+	r.Info("Estimated %s (%s), billed %s%s, %d of %d rows%s",
 		targetintel.FormatCost(res.Estimate.CostUSD), targetintel.FormatBytes(res.Estimate.BytesProcessed),
-		targetintel.FormatCost(res.CostUSD), res.ReturnedRows, res.TotalRows, truncatedNote(res))
+		targetintel.FormatCost(res.CostUSD), capNote(opts), res.ReturnedRows, res.TotalRows, truncatedNote(res))
 
 	return renderRows(cmd, res, textColumns)
 }
@@ -234,6 +234,15 @@ func rowTable(headers []string, rows []map[string]any) string {
 	}
 
 	return ui.Table(headers, cells)
+}
+
+// capNote names the bytes-billed cap when the job ran under one.
+func capNote(opts targetintel.QueryOptions) string {
+	if opts.MaxCostUSD <= 0 {
+		return ""
+	}
+
+	return " (cap " + targetintel.FormatCost(opts.MaxCostUSD) + ")"
 }
 
 func truncatedNote(res *targetintel.Result) string {
@@ -295,7 +304,7 @@ func renderEstimate(cmd *cobra.Command, c *targetintel.Client, opts targetintel.
 	case within:
 		r.Stat("Max cost", targetintel.FormatCost(opts.MaxCostUSD)+" (within limit)")
 	default:
-		r.Warn("Estimated cost exceeds the max cost %s; `query` would refuse this statement.", targetintel.FormatCost(opts.MaxCostUSD))
+		r.Warn("The estimate exceeds the max cost %s. The job still runs under that cap and fails free if it really bills that much; the dry run cannot see cluster pruning, so a clustered lookup usually bills far less.", targetintel.FormatCost(opts.MaxCostUSD))
 	}
 
 	return nil

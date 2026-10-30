@@ -106,7 +106,7 @@ The CLI is designed to be safe to drive from scripts and AI agents. This section
 | `VC_TI_VIEWS_DATASET`                      | Dataset holding the `observations_by_*` routines used by `target-intel cves` and `product` (default `anchorbreaker_views_prod`). Same precedence as the project. |
 | `VC_TI_DATASET`                            | Dataset holding the warehouse tables read by `target-intel host` and `cves --counts` (default `anchorbreaker_prod`). Same precedence as the project. |
 | `VC_TI_CREDENTIALS`                        | Path to a Google credentials JSON file (service-account key or `authorized_user`). Takes precedence over the stored `target-intel auth login` credential and Application Default Credentials; while set, `target-intel auth login` refuses. |
-| `VC_TI_MAX_COST`                           | Default per-query cost limit in USD for `target-intel query` (flag `--max-cost` wins; built-in default `1.00`; `0` disables the limit). |
+| `VC_TI_MAX_COST`                           | Default per-query cost cap in USD for `target-intel` queries, enforced by BigQuery as a bytes-billed limit (flag `--max-cost` wins; built-in default `1.00`; `0` disables the cap). |
 | `VC_TI_PRICE_PER_TIB`                      | On-demand price used to turn bytes into dollars (default `6.25`). |
 
 ### Exit codes
@@ -120,7 +120,7 @@ The CLI is designed to be safe to drive from scripts and AI agents. This section
 | 4    | Resource not found (HTTP 404, no such index). |
 | 5    | Rate limited (HTTP 429). |
 | 6    | Network failure (DNS, connection refused, timeout). |
-| 7    | Cost limit exceeded (`target-intel query` refused before anything was billed). |
+| 7    | Cost limit exceeded (BigQuery stopped a `target-intel` query at the bytes-billed cap before anything was billed). |
 | 130  | Cancelled by SIGINT (POSIX `128 + 2`). |
 
 ### Error envelope
@@ -439,7 +439,7 @@ vulncheck target-intel host     <ipv4|cidr> [--days <n>] [--limit <n>|--all] [--
 
 `auth login` runs the same browser flow as `gcloud auth login` (loopback redirect, PKCE) and stores a refresh token in `~/.config/vulncheck/target-intel-credentials.json` (mode 0600, Google `authorized_user` format). It also saves the billing project and location to `vulncheck.yaml` so later invocations need no flags. Credential precedence: `VC_TI_CREDENTIALS`, then the stored login, then Application Default Credentials. `auth status --json` always exits 0 and returns `{schema_version, authenticated, credential_source, principal, project, project_source, location, location_source, max_cost_usd, reason}`.
 
-Every `query` runs a free dry run first. If the estimated on-demand cost exceeds `--max-cost` (default $1.00) the query is **not run**, nothing is billed, and the command exits 7 with error code `cost_limit_exceeded`; the hint names the `--max-cost` value that would allow it. The same cap is sent to BigQuery as `maximumBytesBilled`, so a job can never bill past it even if the estimate is wrong. Only `SELECT` statements are allowed. `--limit` caps rows returned, not bytes scanned: put `WHERE`/`LIMIT` in the SQL to cut cost. SQL comes from `--query`, `--from-file` (`-` for stdin), or piped stdin.
+Every `query` runs a free dry run first and prints the estimate, then runs with `--max-cost` (default $1.00) sent to BigQuery as `maximumBytesBilled`. BigQuery enforces that cap on the bytes actually read: a job that would bill more **fails before anything is charged**, and the command exits 7 with error code `cost_limit_exceeded` and a hint naming the `--max-cost` value that would allow it. The estimate alone never refuses a query, because the dry run is an upper bound that cannot see cluster pruning: a lookup on a clustered table (every `observations_by_*` routine, `host`, `cves --counts`) routinely estimates hundreds of GiB and bills a few. `estimate` and `--dry-run` warn when the estimate is over the cap so you can decide before running. Only `SELECT` statements are allowed. `--limit` caps rows returned, not bytes scanned: put `WHERE`/`LIMIT` in the SQL to cut cost. SQL comes from `--query`, `--from-file` (`-` for stdin), or piped stdin.
 
 `query --json` returns `{schema_version, job_id, estimate: {bytes_processed, cost_usd, statement_type}, bytes_billed, cost_usd, cache_hit, total_rows, returned_rows, truncated, schema: [{name, type, mode}], rows: [{...}]}`. Timestamps are RFC 3339, `BYTES` columns are base64, `NUMERIC` values are decimal strings. `estimate --json` (and `query --dry-run --json`) returns `{schema_version, estimate, max_cost_usd, within_limit}`. `tables describe --json` returns the schema plus size, row count, partition and clustering keys and the cost of a full scan; it is free, so use it before writing SQL.
 

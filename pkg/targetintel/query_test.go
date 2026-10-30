@@ -28,15 +28,38 @@ func TestCost(t *testing.T) {
 
 func TestCostLimitErrorClassified(t *testing.T) {
 	t.Parallel()
-	e := (&CostLimitError{Estimate: Estimate{BytesProcessed: 2605959446528, CostUSD: 14.82}, MaxCostUSD: 1}).Classified()
+	e := (&CostLimitError{Estimate: Estimate{BytesProcessed: 2605959446528, CostUSD: 14.82}, MaxCostUSD: 1, RequiredBytes: 3 << 30, PricePerTiB: 6.25}).Classified()
 	assert.Equal(t, errs.KindCostLimit, e.Kind)
 	assert.Equal(t, 7, e.ExitCode())
-	assert.Equal(t, "estimated cost $14.82 exceeds max cost $1.00", e.Message)
-	assert.Contains(t, e.Hint, "--max-cost 14.83")
-	assert.Contains(t, e.Hint, "2.37 TiB")
+	assert.Equal(t, "query exceeded max cost $1.00", e.Message)
+	assert.Contains(t, e.Hint, "--max-cost 0.02")
+	assert.Contains(t, e.Hint, "3.00 GiB billed")
+	assert.Contains(t, e.Hint, "estimated 2.37 TiB")
 
 	var cost *CostLimitError
 	require.True(t, errors.As(e, &cost), "the cause survives wrapping")
+}
+
+func TestCostLimitFromJob(t *testing.T) {
+	t.Parallel()
+	opts := QueryOptions{MaxCostUSD: 1, PricePerTiB: 6.25}
+	est := Estimate{BytesProcessed: 1 << 40}
+
+	berr := &bigquery.Error{Reason: "bytesBilledLimitExceeded", Message: "Query exceeded limit for bytes billed: 10485760. 3221225472 or higher required."}
+	err := costLimitFromJob(berr, est, opts)
+	var cost *CostLimitError
+	require.True(t, errors.As(err, &cost))
+	assert.Equal(t, int64(3221225472), cost.RequiredBytes)
+	assert.Equal(t, est, cost.Estimate)
+
+	gerr := &googleapi.Error{Code: 400, Errors: []googleapi.ErrorItem{{Reason: "bytesBilledLimitExceeded", Message: "Query exceeded limit for bytes billed: 10485760."}}}
+	err = costLimitFromJob(gerr, est, opts)
+	require.True(t, errors.As(err, &cost))
+	assert.Equal(t, int64(0), cost.RequiredBytes, "no required figure in the message")
+
+	other := &bigquery.Error{Reason: "invalidQuery", Message: "syntax error"}
+	assert.Equal(t, other, costLimitFromJob(other, est, opts), "other job errors pass through")
+	assert.Equal(t, errs.KindCostLimit, classify(err).(*errs.Error).Kind)
 }
 
 func TestClassifyGoogleAPIErrors(t *testing.T) {

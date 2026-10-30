@@ -210,9 +210,9 @@ func runRange(cmd *cobra.Command, c *targetintel.Client, opts targetintel.QueryO
 	if r.IsJSON() {
 		return r.JSON(resultPayload{SchemaVersion: output.SchemaVersion, Extra: map[string]any{"query": q}, Result: res})
 	}
-	r.Info("Estimated %s (%s), billed %s, %d of %d hosts%s",
+	r.Info("Estimated %s (%s), billed %s%s, %d of %d hosts%s",
 		targetintel.FormatCost(res.Estimate.CostUSD), targetintel.FormatBytes(res.Estimate.BytesProcessed),
-		targetintel.FormatCost(res.CostUSD), res.ReturnedRows, res.TotalRows, truncatedNote(res))
+		targetintel.FormatCost(res.CostUSD), capNote(opts), res.ReturnedRows, res.TotalRows, truncatedNote(res))
 	if res.TotalRows == 0 {
 		r.Warn("No host in %s was seen listening on any port in the current scan window.", q.CIDR)
 

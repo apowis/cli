@@ -305,9 +305,10 @@ var En = Copy{
 	TargetIntelLong: heredoc.Doc(`
 		Query VulnCheck Target Intelligence data in BigQuery.
 
-		Every query runs a free dry run first to estimate its cost. A query whose
-		estimate exceeds the max cost (default $1.00) is refused before any bytes
-		are billed; override per invocation with --max-cost or VC_TI_MAX_COST.
+		Every query runs a free dry run first to estimate its cost, then runs
+		under a bytes-billed cap of --max-cost (default $1.00, or VC_TI_MAX_COST).
+		BigQuery enforces the cap on the bytes actually read: a job that would
+		bill more fails before anything is charged, and the command exits 7.
 
 		Authenticate with a Google account using "target-intel auth login", or set
 		VC_TI_CREDENTIALS to a service-account key file.
@@ -323,16 +324,18 @@ var En = Copy{
 	TargetIntelTablesShort:         "List and describe tables",
 	TargetIntelTablesListShort:     "List the tables and views in a dataset",
 	TargetIntelTablesDescribeShort: "Show a table's schema, size, partition and cluster keys (free)",
-	TargetIntelQueryShort:          "Run a read-only SQL query (dry run and cost check first)",
+	TargetIntelQueryShort:          "Run a read-only SQL query under a cost cap (dry run first)",
 	TargetIntelQueryLong: heredoc.Doc(`
 		Run a read-only SQL query against Target Intelligence.
 
 		Before execution the CLI performs a BigQuery dry run to learn how many
-		bytes the query scans and converts that to an estimated USD cost. If the
-		estimate exceeds --max-cost the query is NOT run and the command exits 7
-		(cost_limit_exceeded). The same limit is sent to BigQuery as
-		maximumBytesBilled, so a job can never bill past the cap even if the
-		estimate is wrong.
+		bytes the query may scan and prints that as an estimated USD cost. The
+		query then runs with --max-cost sent to BigQuery as maximumBytesBilled:
+		a job that would bill more than the cap fails before anything is
+		charged and the command exits 7 (cost_limit_exceeded) with the value
+		that would allow it. The estimate is an upper bound: the dry run cannot
+		see cluster pruning, so a lookup on a clustered table often estimates
+		far above what it bills.
 
 		Only SELECT statements are allowed. --limit caps the rows returned, not
 		the bytes scanned: put LIMIT and WHERE clauses in the SQL to cut cost.
