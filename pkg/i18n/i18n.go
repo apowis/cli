@@ -350,10 +350,11 @@ var En = Copy{
 		product-level matches for versionless CPEs. Pass several CVEs in one
 		call: the inputs are scanned once however many are given.
 
-		Tiers 20 and above are served from a nightly match snapshot, so a call
-		is cheap (a few GiB). Tier 10, and any CVE whose NVD CPE mapping changed
-		since the snapshot was built, are matched live and scan more. Use
-		--dry-run to see the estimate; --max-cost applies exactly as for "query".
+		Tiers 20 and above are served from a nightly match snapshot: the dry
+		run estimates about 20 GiB ($0.12) and the bill is usually a third of
+		that, because the snapshot is clustered on CVE. Tier 10, and any CVE
+		whose NVD CPE mapping changed since the snapshot was built, are matched
+		live and scan more. --max-cost applies exactly as for "query".
 		Text mode shows a compact column set; --json returns every column.
 	`),
 	TargetIntelCvesExample: heredoc.Doc(`
