@@ -130,6 +130,9 @@ func runCounts(cmd *cobra.Command, c *targetintel.Client, opts targetintel.Query
 	if r.IsJSON() {
 		return r.JSON(resultPayload{SchemaVersion: output.SchemaVersion, Extra: extra, Result: res})
 	}
+	for _, row := range res.Rows {
+		row["top_countries"] = compactCountries(row["top_countries"])
+	}
 	if err := renderRows(cmd, res, countsTextColumns); err != nil {
 		return err
 	}
@@ -139,4 +142,23 @@ func runCounts(cmd *cobra.Command, c *targetintel.Client, opts targetintel.Query
 	r.Info("hosts_confirmed is tiers 40 and 30; read it together with hosts_unconfirmed, a distro-packaged product can be structurally unconfirmed.")
 
 	return nil
+}
+
+// compactCountries renders top_countries, an array of {country_code, hosts}
+// records, as "US 1031, IN 142, ..." for the text table.
+func compactCountries(v any) any {
+	items, ok := v.([]any)
+	if !ok {
+		return v
+	}
+	parts := make([]string, 0, len(items))
+	for _, it := range items {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		parts = append(parts, targetintel.CellString(m["country_code"])+" "+targetintel.CellString(m["hosts"]))
+	}
+
+	return strings.Join(parts, ", ")
 }
