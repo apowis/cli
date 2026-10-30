@@ -98,6 +98,14 @@ func TestCVERangeChecks(t *testing.T) {
 		_, _, err := s.CVELeaderboard(TopCVEs{MinEPSS: epss})
 		require.NoError(t, err, epss)
 	}
+	sql, params, err := s.CVELeaderboard(TopCVEs{})
+	require.NoError(t, err)
+	assert.NotContains(t, sql, "@min_epss", "no EPSS floor must keep CVEs with a NULL score")
+	assert.Empty(t, params)
+	sql, params, err = s.CVELeaderboard(TopCVEs{MinEPSS: 0.5})
+	require.NoError(t, err)
+	assert.Contains(t, sql, "epss_score >= @min_epss")
+	assert.Len(t, params, 1)
 	for _, epss := range []float64{-0.1, 1.01, math.NaN(), math.Inf(1), math.Inf(-1)} {
 		_, _, err := s.CVELeaderboard(TopCVEs{MinEPSS: epss})
 		requireValidation(t, err, epss)

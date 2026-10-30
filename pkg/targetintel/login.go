@@ -3,6 +3,7 @@ package targetintel
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -77,7 +79,7 @@ func Login(ctx context.Context, opts LoginOptions) (*LoginResult, error) {
 	}
 	defer func() { _ = ln.Close() }()
 
-	conf := oauthConfig(fmt.Sprintf("http://%s/", ln.Addr().String()))
+	conf := oauthConfig(fmt.Sprintf("http://%s%s", ln.Addr().String(), callbackPath))
 	state, err := randomString(16)
 	if err != nil {
 		return nil, err
@@ -90,29 +92,8 @@ func Login(ctx context.Context, opts LoginOptions) (*LoginResult, error) {
 		oauth2.S256ChallengeOption(verifier),
 	)
 
-	type result struct {
-		code string
-		err  error
-	}
-	results := make(chan result, 1)
-	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second}
-	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		switch {
-		case q.Get("state") != state:
-			http.Error(w, "state mismatch", http.StatusBadRequest)
-			results <- result{err: errors.New("oauth state mismatch")}
-		case q.Get("error") != "":
-			_, _ = fmt.Fprintf(w, "Authentication failed: %s. You can close this window.", q.Get("error"))
-			results <- result{err: fmt.Errorf("authorization denied: %s", q.Get("error"))}
-		case q.Get("code") == "":
-			http.Error(w, "missing code", http.StatusBadRequest)
-			results <- result{err: errors.New("redirect carried no authorization code")}
-		default:
-			_, _ = fmt.Fprint(w, "You are now authenticated with the VulnCheck CLI. You can close this window.")
-			results <- result{code: q.Get("code")}
-		}
-	})
+	handler, results := newCallbackHandler(callbackPath, state)
+	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: handler}
 	go func() { _ = srv.Serve(ln) }()
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -159,6 +140,68 @@ func Login(ctx context.Context, opts LoginOptions) (*LoginResult, error) {
 	}
 
 	return &LoginResult{Account: account, Path: path}, nil
+}
+
+// callbackPath is the path of the loopback redirect URL registered with the
+// authorization request. Requests to any other path are not the redirect.
+const callbackPath = "/"
+
+// callbackResult is what the redirect delivered: a code or a terminal error.
+type callbackResult struct {
+	code string
+	err  error
+}
+
+// newCallbackHandler serves the OAuth redirect on path. Only a request that
+// carries the expected state and either a code or an error ends the login;
+// that outcome is delivered on the returned channel exactly once. Other paths
+// get a 404, and requests with no code and no error, or with the wrong state,
+// get a 400 and leave the flow waiting for the real redirect. A code is never
+// accepted under a mismatched state. Later requests never block.
+func newCallbackHandler(path, state string) (http.Handler, <-chan callbackResult) {
+	results := make(chan callbackResult, 1)
+	var once sync.Once
+	deliver := func(res callbackResult) bool {
+		delivered := false
+		once.Do(func() {
+			results <- res
+			delivered = true
+		})
+
+		return delivered
+	}
+
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != path {
+			http.NotFound(w, r)
+
+			return
+		}
+		q := r.URL.Query()
+		code, oauthErr := q.Get("code"), q.Get("error")
+		switch {
+		case code == "" && oauthErr == "":
+			http.Error(w, "missing code", http.StatusBadRequest)
+		case subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(state)) != 1:
+			http.Error(w, "state mismatch", http.StatusBadRequest)
+		case oauthErr != "":
+			if !deliver(callbackResult{err: fmt.Errorf("authorization denied: %s", oauthErr)}) {
+				_, _ = fmt.Fprint(w, "Authentication has already completed. You can close this window.")
+
+				return
+			}
+			_, _ = fmt.Fprintf(w, "Authentication failed: %s. You can close this window.", oauthErr)
+		default:
+			if !deliver(callbackResult{code: code}) {
+				_, _ = fmt.Fprint(w, "Authentication has already completed. You can close this window.")
+
+				return
+			}
+			_, _ = fmt.Fprint(w, "You are now authenticated with the VulnCheck CLI. You can close this window.")
+		}
+	})
+
+	return h, results
 }
 
 func randomString(n int) (string, error) {

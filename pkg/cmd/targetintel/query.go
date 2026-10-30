@@ -75,17 +75,70 @@ func (f *queryFlags) sqlSource(cmd *cobra.Command, stdin io.Reader) (string, err
 		return string(b), nil
 	}
 
-	// No flag: accept piped stdin, but never block on a terminal.
+	// No flag: accept piped stdin, but never block on a terminal, and give
+	// up on a pipe that sends nothing (a runner that leaves stdin open).
 	if !output.FromCmd(cmd).Interactive() && stdin != nil {
 		if fi, ok := stdin.(*os.File); !ok || !isTerminal(fi) {
-			b, err := io.ReadAll(stdin)
-			if err == nil && strings.TrimSpace(string(b)) != "" {
+			b, err := readPipedStdin(stdin, stdinWait)
+			if err != nil {
+				return "", errs.Validation("read stdin: %s", err.Error())
+			}
+			if strings.TrimSpace(string(b)) != "" {
 				return string(b), nil
 			}
 		}
 	}
 
-	return "", errs.Validation("no SQL given; pass --query, --from-file, or pipe SQL on stdin")
+	return "", errs.Validation("no SQL given; pass --query, --from-file, or pipe SQL on stdin").
+		WithHint("use --from-file - to wait for SQL on stdin however long it takes")
+}
+
+// stdinWait is how long implicit stdin may stay silent before it is taken
+// to carry no SQL.
+var stdinWait = 3 * time.Second
+
+// readPipedStdin reads r to the end once it yields a first byte, or returns
+// nothing if it yields none within wait. On a timeout the reading goroutine
+// is left blocked; the command fails straight after, so it dies with the
+// process.
+func readPipedStdin(r io.Reader, wait time.Duration) ([]byte, error) {
+	type result struct {
+		b   []byte
+		err error
+	}
+	started := make(chan struct{})
+	done := make(chan result, 1)
+	go func() {
+		b, err := io.ReadAll(&firstReadSignal{r: r, started: started})
+		done <- result{b, err}
+	}()
+	select {
+	case <-started:
+	case res := <-done:
+		return res.b, res.err
+	case <-time.After(wait):
+		return nil, nil
+	}
+	res := <-done
+
+	return res.b, res.err
+}
+
+// firstReadSignal closes started the first time a read returns data.
+type firstReadSignal struct {
+	r       io.Reader
+	started chan struct{}
+	once    bool
+}
+
+func (s *firstReadSignal) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if n > 0 && !s.once {
+		s.once = true
+		close(s.started)
+	}
+
+	return n, err
 }
 
 func isTerminal(f *os.File) bool {
@@ -138,10 +191,15 @@ func rowLimit(limit int, all bool) (int, error) {
 
 // estimatePayload is the JSON emitted by estimate and query --dry-run.
 type estimatePayload struct {
-	SchemaVersion int                  `json:"schema_version"`
-	Estimate      targetintel.Estimate `json:"estimate"`
-	MaxCostUSD    float64              `json:"max_cost_usd"`
-	WithinLimit   bool                 `json:"within_limit"`
+	SchemaVersion int `json:"schema_version"`
+	estimateResult
+}
+
+// estimateResult is one dry run checked against the cost cap.
+type estimateResult struct {
+	Estimate    targetintel.Estimate `json:"estimate"`
+	MaxCostUSD  float64              `json:"max_cost_usd"`
+	WithinLimit bool                 `json:"within_limit"`
 }
 
 // resultPayload is the JSON emitted by a successful query.
@@ -322,19 +380,34 @@ func estimateCommand() *cobra.Command {
 
 func renderEstimate(cmd *cobra.Command, c *targetintel.Client, opts targetintel.QueryOptions) error {
 	r := output.FromCmd(cmd)
-	est, err := c.DryRun(cmd.Context(), opts)
+	e, err := estimate(cmd, c, opts)
 	if err != nil {
 		return err
 	}
-	within := opts.MaxCostUSD <= 0 || est.CostUSD <= opts.MaxCostUSD
 	if r.IsJSON() {
-		return r.JSON(estimatePayload{
-			SchemaVersion: output.SchemaVersion,
-			Estimate:      *est,
-			MaxCostUSD:    opts.MaxCostUSD,
-			WithinLimit:   within,
-		})
+		return r.JSON(estimatePayload{SchemaVersion: output.SchemaVersion, estimateResult: e})
 	}
+	printEstimate(r, e, opts)
+
+	return nil
+}
+
+// estimate dry-runs opts and checks the estimate against its cost cap.
+func estimate(cmd *cobra.Command, c *targetintel.Client, opts targetintel.QueryOptions) (estimateResult, error) {
+	est, err := c.DryRun(cmd.Context(), opts)
+	if err != nil {
+		return estimateResult{}, err
+	}
+
+	return estimateResult{
+		Estimate:    *est,
+		MaxCostUSD:  opts.MaxCostUSD,
+		WithinLimit: opts.MaxCostUSD <= 0 || est.CostUSD <= opts.MaxCostUSD,
+	}, nil
+}
+
+func printEstimate(r *output.Renderer, e estimateResult, opts targetintel.QueryOptions) {
+	est, within := e.Estimate, e.WithinLimit
 	r.Stat("Statement", est.StatementType)
 	r.Stat("Bytes to be scanned", targetintel.FormatBytes(est.BytesProcessed))
 	r.Stat("Estimated cost", targetintel.FormatCost(est.CostUSD)+" (on-demand, "+targetintel.FormatCost(opts.PricePerTiB)+"/TiB)")
@@ -346,6 +419,4 @@ func renderEstimate(cmd *cobra.Command, c *targetintel.Client, opts targetintel.
 	default:
 		r.Warn("The estimate exceeds the max cost %s. The query would still run under that cap and fail free if it really billed that much; the dry run cannot see cluster pruning, so a clustered lookup usually bills far less.", targetintel.FormatCost(opts.MaxCostUSD))
 	}
-
-	return nil
 }

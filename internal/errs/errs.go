@@ -43,8 +43,9 @@ const (
 	// KindCancelled means the user (or a parent process) sent SIGINT/SIGTERM
 	// or cancelled the context. Exit 130 to match POSIX (128 + SIGINT).
 	KindCancelled Kind = "cancelled"
-	// KindCostLimit means a query's estimated cost exceeded the caller's
-	// limit, so it was refused before anything was billed. Exit 7.
+	// KindCostLimit means a query would have billed more than the caller's
+	// --max-cost. BigQuery enforces the cap as maximumBytesBilled on the bytes
+	// actually billed, and a job over it fails without charge. Exit 7.
 	KindCostLimit Kind = "cost_limit_exceeded"
 )
 

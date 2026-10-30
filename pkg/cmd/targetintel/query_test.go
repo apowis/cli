@@ -2,10 +2,13 @@ package targetintel
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -66,6 +69,38 @@ func TestReadSQL(t *testing.T) {
 		got, err := f.readSQL(testCmd(t, false), strings.NewReader("SELECT 4"))
 		require.NoError(t, err)
 		assert.Equal(t, "SELECT 4", got)
+	})
+
+	t.Run("open pipe that sends nothing", func(t *testing.T) {
+		t.Parallel()
+		pr, pw := io.Pipe()
+		t.Cleanup(func() { _ = pw.Close() })
+		b, err := readPipedStdin(pr, 50*time.Millisecond)
+		require.NoError(t, err)
+		assert.Empty(t, b, "must give up instead of blocking forever")
+	})
+
+	t.Run("slow pipe after first byte", func(t *testing.T) {
+		t.Parallel()
+		pr, pw := io.Pipe()
+		go func() {
+			_, _ = pw.Write([]byte("SELECT "))
+			time.Sleep(100 * time.Millisecond)
+			_, _ = pw.Write([]byte("6"))
+			_ = pw.Close()
+		}()
+		b, err := readPipedStdin(pr, 50*time.Millisecond)
+		require.NoError(t, err)
+		assert.Equal(t, "SELECT 6", string(b))
+	})
+
+	t.Run("stdin read error", func(t *testing.T) {
+		t.Parallel()
+		pr, pw := io.Pipe()
+		_ = pw.CloseWithError(errors.New("boom"))
+		f := queryFlags{}
+		_, err := f.readSQL(testCmd(t, false), pr)
+		require.ErrorContains(t, err, "boom")
 	})
 
 	t.Run("interactive with nothing", func(t *testing.T) {

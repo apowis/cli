@@ -191,7 +191,9 @@ func (s Settings) HostRange(q HostQuery) (string, []bigquery.QueryParameter, err
 		" AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @lookback_days DAY)" +
 		" GROUP BY ip_int" +
 		") SELECT NET.IP_TO_STRING(NET.IPV4_FROM_INT64(h.ip_int)) AS ip, g.country_code, g.asn, g.as_name, h.last_seen, h.port_count," +
-		" ARRAY(SELECT CONCAT(CAST(sv.port AS STRING), '/', COALESCE(sv.transport, 'unknown'), ' ', sv.service) FROM UNNEST(h.services) AS sv) AS services," +
+		// Every CONCAT input is coalesced: one NULL would make the element
+		// NULL, and BigQuery fails the whole query on a NULL array element.
+		" ARRAY(SELECT CONCAT(COALESCE(CAST(sv.port AS STRING), 'unknown'), '/', COALESCE(sv.transport, 'unknown'), ' ', COALESCE(sv.service, 'unknown')) FROM UNNEST(h.services) AS sv) AS services," +
 		" COALESCE(f.products, []) AS products" +
 		" FROM h" +
 		" LEFT JOIN " + s.Table("ipgeo_snapshot") + " AS g ON g.snapshot_hash = h.ipgeo_hash" +

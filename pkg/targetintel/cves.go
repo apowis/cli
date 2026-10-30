@@ -101,6 +101,7 @@ type TopCVEs struct {
 // CVELeaderboard reads cve_host_counts ordered by exposed hosts, most first,
 // optionally limited to VulnCheck KEV entries and to an EPSS floor. CVEs
 // with only tier-10 hosts are left out, since their hosts column is zero.
+// A CVE with no EPSS score yet is only left out when a floor above 0 is set.
 func (s Settings) CVELeaderboard(t TopCVEs) (string, []bigquery.QueryParameter, error) {
 	// Written as a negated range so NaN, which fails every comparison, is
 	// rejected too.
@@ -109,11 +110,16 @@ func (s Settings) CVELeaderboard(t TopCVEs) (string, []bigquery.QueryParameter, 
 	}
 	sql := "SELECT " + strings.Join(CVEHostCountsColumns, ", ") +
 		" FROM " + s.Table("cve_host_counts") +
-		" WHERE hosts > 0 AND epss_score >= @min_epss"
+		" WHERE hosts > 0"
+	var params []bigquery.QueryParameter
+	if t.MinEPSS > 0 {
+		sql += " AND epss_score >= @min_epss"
+		params = append(params, bigquery.QueryParameter{Name: "min_epss", Value: t.MinEPSS})
+	}
 	if t.KEVOnly {
 		sql += " AND kev_in_catalog"
 	}
 	sql += " ORDER BY hosts DESC, cve_id"
 
-	return sql, []bigquery.QueryParameter{{Name: "min_epss", Value: t.MinEPSS}}, nil
+	return sql, params, nil
 }

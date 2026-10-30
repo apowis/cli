@@ -1,7 +1,7 @@
 // Package targetintel talks to the VulnCheck Target Intelligence warehouse in
 // BigQuery: credential resolution, a gcloud-style browser login, and a query
-// path that dry-runs every statement and refuses to run one whose estimated
-// cost exceeds the caller's limit.
+// path that caps every job's bytes billed at the caller's cost limit, so
+// BigQuery itself refuses a job that would cost more.
 package targetintel
 
 import (

@@ -74,6 +74,7 @@ func TestHostRange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, sql, "FROM `p.d.host_profile` WHERE ip_int BETWEEN @lo AND @hi")
 	assert.Contains(t, sql, "FROM `p.d.fingerprint_current` WHERE ip_int BETWEEN @lo AND @hi")
+	assert.Contains(t, sql, "COALESCE(sv.service, 'unknown')", "a NULL service must not become a NULL array element")
 	require.Len(t, params, 3)
 	assert.Equal(t, int64(81<<24|82<<16|248<<8), params[0].Value)
 	assert.Equal(t, int64(81<<24|82<<16|248<<8|255), params[1].Value)

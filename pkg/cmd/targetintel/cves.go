@@ -43,6 +43,9 @@ func cvesCommand() *cobra.Command {
 			if counts && routineOnly {
 				return errs.Validation("--counts reads a fixed 30-day window across every tier; --days and --min-confidence do not apply")
 			}
+			if counts && (cmd.Flags().Changed("limit") || all) {
+				return errs.Validation("--counts returns one row per requested CVE; --limit and --all do not apply")
+			}
 			if top && (len(cves) > 0 || counts || groupBy != "" || routineOnly) {
 				return errs.Validation("--top takes no --cves, --counts, --group-by, --days or --min-confidence")
 			}
@@ -83,6 +86,10 @@ func cvesCommand() *cobra.Command {
 
 			if counts {
 				opts.SQL, opts.Params = s.CVEHostCounts(ids)
+				// cve_host_counts holds at most one row per CVE, so the result
+				// is bounded by len(ids). Fetch every row: a --limit cut would
+				// report the CVEs past it as missing.
+				opts.Limit = 0
 				c, err := targetintel.NewClient(cmd.Context(), s)
 				if err != nil {
 					return err
@@ -153,28 +160,19 @@ func runCounts(cmd *cobra.Command, c *targetintel.Client, opts targetintel.Query
 	if err != nil {
 		return err
 	}
-	seen := map[string]bool{}
-	for _, row := range res.Rows {
-		if id, ok := row["cve_id"].(string); ok {
-			seen[id] = true
-		}
-	}
-	missing := []string{}
-	for _, id := range ids {
-		if !seen[id] {
-			missing = append(missing, id)
-		}
-	}
+	// A truncated result cannot tell an absent CVE from one past the cut,
+	// so only name missing CVEs when every row came back.
+	var missing []string
 	extra := map[string]any{"table": "cve_host_counts", "query": query}
-	if ids != nil {
+	if ids != nil && !res.Truncated {
+		missing = missingCVEs(ids, res.Rows)
 		extra["missing"] = missing
 	}
 	if r.IsJSON() {
 		return r.JSON(resultPayload{SchemaVersion: output.SchemaVersion, Extra: extra, Result: res})
 	}
-	if ids == nil {
-		r.Info("%d of %d CVEs%s", res.ReturnedRows, res.TotalRows, truncatedNote(res))
-	}
+	r.Info("Billed %s (%s%s), %d of %d rows%s",
+		targetintel.FormatCost(res.CostUSD), targetintel.FormatBytes(res.BytesBilled), capNote(opts), res.ReturnedRows, res.TotalRows, truncatedNote(res))
 	for _, row := range res.Rows {
 		row["top_countries"] = compactCountries(row["top_countries"])
 	}
@@ -187,6 +185,25 @@ func runCounts(cmd *cobra.Command, c *targetintel.Client, opts targetintel.Query
 	r.Info("hosts_confirmed is tiers 40 and 30; read it together with hosts_unconfirmed, a distro-packaged product can be structurally unconfirmed.")
 
 	return nil
+}
+
+// missingCVEs returns the ids, in order, that have no row in rows keyed by
+// cve_id. It is never nil, so JSON renders an empty list as [].
+func missingCVEs(ids []string, rows []map[string]any) []string {
+	seen := map[string]bool{}
+	for _, row := range rows {
+		if id, ok := row["cve_id"].(string); ok {
+			seen[id] = true
+		}
+	}
+	missing := []string{}
+	for _, id := range ids {
+		if !seen[id] {
+			missing = append(missing, id)
+		}
+	}
+
+	return missing
 }
 
 // compactCountries renders top_countries, an array of {country_code, hosts}

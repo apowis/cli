@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -112,7 +113,7 @@ func (c *Client) Run(ctx context.Context, opts QueryOptions) (*Result, error) {
 	}
 	q := c.newQuery(opts)
 	if opts.MaxCostUSD > 0 {
-		q.MaxBytesBilled = max(int64(opts.MaxCostUSD/opts.PricePerTiB*tib), minMaxBytesBilled)
+		q.MaxBytesBilled = maxBytesBilled(opts.MaxCostUSD, opts.PricePerTiB)
 	}
 	// The job ID is chosen here rather than by the server so a job whose
 	// insert was interrupted can still be found and cancelled.
@@ -226,6 +227,17 @@ func mode(f *bigquery.FieldSchema) string {
 	}
 }
 
+// maxBytesBilled converts a cost cap to bytes, clamped to what BigQuery
+// accepts. A cap too large for an int64 saturates rather than wrapping.
+func maxBytesBilled(maxCostUSD, pricePerTiB float64) int64 {
+	b := maxCostUSD / pricePerTiB * tib
+	if b >= math.MaxInt64 {
+		return math.MaxInt64
+	}
+
+	return max(int64(b), minMaxBytesBilled)
+}
+
 // FormatCost renders a dollar amount for humans.
 func FormatCost(usd float64) string {
 	switch {
@@ -243,19 +255,17 @@ func FormatBytes(b int64) string {
 	return humanBytes(b)
 }
 
-var (
-	lineComment  = regexp.MustCompile(`(?m)--[^\n]*|#[^\n]*`)
-	blockComment = regexp.MustCompile(`(?s)/\*.*?\*/`)
-	leadingWord  = regexp.MustCompile(`^[\s(]*([A-Za-z]+)`)
-)
+var leadingWord = regexp.MustCompile(`^[\s(]*([A-Za-z]+)`)
 
 // IsSelect reports whether the statement is a single SELECT (or WITH ...
 // SELECT) once comments are stripped. It is a guard against handing DML, DDL
 // or scripts to the warehouse, not a parser: a statement it accepts still
 // runs under the credential's own permissions.
 func IsSelect(sql string) bool {
-	s := blockComment.ReplaceAllString(sql, " ")
-	s = lineComment.ReplaceAllString(s, " ")
+	s, ok := stripLiterals(sql)
+	if !ok {
+		return false
+	}
 	m := leadingWord.FindStringSubmatch(s)
 	if m == nil {
 		return false
@@ -269,4 +279,76 @@ func IsSelect(sql string) bool {
 	body := strings.TrimRight(strings.TrimSpace(s), ";")
 
 	return !strings.Contains(body, ";")
+}
+
+// stripLiterals replaces every comment with a space and empties every
+// quoted string and identifier, so a "--" or ";" inside a literal is not
+// mistaken for a comment or a statement break. It reports false for an
+// unterminated literal or block comment, which BigQuery would reject anyway.
+func stripLiterals(sql string) (string, bool) {
+	var b strings.Builder
+	for i := 0; i < len(sql); {
+		c := sql[i]
+		switch {
+		case c == '#' || strings.HasPrefix(sql[i:], "--"):
+			end := strings.IndexByte(sql[i:], '\n')
+			if end < 0 {
+				return b.String(), true
+			}
+			b.WriteByte(' ')
+			i += end
+		case strings.HasPrefix(sql[i:], "/*"):
+			end := strings.Index(sql[i+2:], "*/")
+			if end < 0 {
+				return "", false
+			}
+			b.WriteByte(' ')
+			i += end + 4
+		case c == '\'' || c == '"' || c == '`':
+			quote := string(c)
+			if c != '`' && strings.HasPrefix(sql[i:], strings.Repeat(quote, 3)) {
+				quote = strings.Repeat(quote, 3)
+			}
+			raw := c != '`' && rawPrefix(sql[:i])
+			j := i + len(quote)
+			for ; j < len(sql) && !strings.HasPrefix(sql[j:], quote); j++ {
+				if sql[j] == '\\' && !raw {
+					j++
+				}
+			}
+			if j >= len(sql) {
+				return "", false
+			}
+			b.WriteString(quote + quote)
+			i = j + len(quote)
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+
+	return b.String(), true
+}
+
+// rawPrefix reports whether the text before a quote ends in a string
+// prefix (r, b, rb or br in any case) that makes the literal raw.
+func rawPrefix(before string) bool {
+	tail := before[max(0, len(before)-2):]
+	k := len(tail)
+	for k > 0 && strings.IndexByte("rRbB", tail[k-1]) >= 0 {
+		k--
+	}
+	prefix := tail[k:]
+	if prefix == "" {
+		return false
+	}
+	if start := len(before) - len(prefix); start > 0 && isIdentByte(before[start-1]) {
+		return false
+	}
+
+	return strings.ContainsAny(prefix, "rR")
+}
+
+func isIdentByte(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }

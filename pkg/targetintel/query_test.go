@@ -1,8 +1,10 @@
 package targetintel
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"net/url"
 	"testing"
@@ -113,6 +115,11 @@ func TestToJSONValue(t *testing.T) {
 	assert.Equal(t, []any{"a", "b"}, got["tags"])
 	assert.Equal(t, map[string]any{"k": int64(1)}, got["nested"])
 
+	special := toJSONRow(map[string]bigquery.Value{"nan": math.NaN(), "inf": math.Inf(1), "ninf": math.Inf(-1), "f": 1.5, "b": true})
+	assert.Equal(t, map[string]any{"nan": "NaN", "inf": "Infinity", "ninf": "-Infinity", "f": 1.5, "b": true}, special)
+	_, err := json.Marshal(special)
+	require.NoError(t, err)
+
 	assert.Equal(t, "NULL", CellString(nil))
 	assert.Equal(t, "443", CellString(int64(443)))
 	assert.Equal(t, `[1,2]`, CellString([]any{int64(1), int64(2)}))
@@ -151,6 +158,13 @@ func TestClassifyTokenRefreshErrors(t *testing.T) {
 	assert.Equal(t, plain, classify(plain))
 }
 
+func TestMaxBytesBilled(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, int64(tib), maxBytesBilled(6.25, 6.25))
+	assert.Equal(t, int64(minMaxBytesBilled), maxBytesBilled(0.000001, 6.25))
+	assert.Equal(t, int64(math.MaxInt64), maxBytesBilled(1e9, 6.25))
+}
+
 func TestIsSelect(t *testing.T) {
 	t.Parallel()
 	ok := []string{
@@ -161,6 +175,11 @@ func TestIsSelect(t *testing.T) {
 		"/* block */ SELECT 1 -- trailing ; in a comment",
 		"(SELECT 1)",
 		"SELECT * FROM `p.d.observations_by_cves`(@cves, 20, 30)",
+		"SELECT ';' AS s",
+		`SELECT '--' AS s, "#" AS h`,
+		`SELECT '''a;b''' AS s`,
+		`SELECT 'it\'s;' AS s`,
+		"SELECT `odd;name` FROM t",
 	}
 	for _, sql := range ok {
 		assert.True(t, IsSelect(sql), sql)
@@ -174,6 +193,11 @@ func TestIsSelect(t *testing.T) {
 		"DECLARE x INT64; SELECT x",
 		"CALL p()",
 		"/* SELECT */ DROP TABLE t",
+		"SELECT 'x -- '; DELETE FROM ds.t WHERE TRUE",
+		`SELECT "x # "; DELETE FROM ds.t WHERE TRUE`,
+		`SELECT r'\'; DELETE FROM t; SELECT '`,
+		"SELECT 'unterminated",
+		"SELECT 1 /* unterminated",
 	}
 	for _, sql := range bad {
 		assert.False(t, IsSelect(sql), sql)

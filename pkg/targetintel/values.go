@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
 	"time"
 
@@ -44,7 +45,20 @@ func toJSONValue(v bigquery.Value) any {
 		}
 
 		return arr
-	case bigquery.Value:
+	case float64:
+		// encoding/json cannot encode NaN or an infinity, so emit them
+		// the way BigQuery spells them.
+		switch {
+		case math.IsNaN(x):
+			return "NaN"
+		case math.IsInf(x, 1):
+			return "Infinity"
+		case math.IsInf(x, -1):
+			return "-Infinity"
+		}
+
+		return x
+	case string, int64, bool:
 		return x
 	default:
 		return fmt.Sprint(x)

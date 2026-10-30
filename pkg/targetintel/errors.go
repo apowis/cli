@@ -43,6 +43,7 @@ func (e *CostLimitError) Classified() *errs.Error {
 	} else {
 		hint += ", or raise --max-cost"
 	}
+
 	return errs.Wrap(errs.KindCostLimit, e, "%s", e.Error()).WithHint("%s.", hint)
 }
 

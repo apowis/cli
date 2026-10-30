@@ -69,11 +69,20 @@ func loginCommand() *cobra.Command {
 				return err
 			}
 
-			// Save the project so later invocations need no flag. An
-			// explicit --project wins; otherwise keep whatever is already
-			// stored and fall back to the default.
-			if err := config.SetTargetIntel(config.TargetIntelConfig{Project: s.Project, Location: s.Location}); err != nil {
-				return err
+			// Save an explicit --project or --location so later invocations
+			// need no flag. Everything else already stored is kept, and a
+			// value that only came from the environment is not persisted.
+			if s.ProjectSource == "flag" || s.LocationSource == "flag" {
+				saved := config.TargetIntel()
+				if s.ProjectSource == "flag" {
+					saved.Project = s.Project
+				}
+				if s.LocationSource == "flag" {
+					saved.Location = s.Location
+				}
+				if err := config.SetTargetIntel(saved); err != nil {
+					return err
+				}
 			}
 
 			if r.IsJSON() {

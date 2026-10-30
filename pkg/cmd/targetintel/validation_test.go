@@ -45,6 +45,8 @@ func TestInvalidInputExitsValidation(t *testing.T) {
 		{"host", "1.2.3.4", "--dry-run"},
 		{"host", "10.0.0.5/24", "--dry-run"},
 		{"cves", "--cves", "CVE-2024-6387", "--dry-run"},
+		{"cves", "--cves", "CVE-2024-6387", "--counts", "--dry-run"},
+		{"cves", "--top", "--limit", "10", "--dry-run"},
 		{"product", "--vendor", "apache", "--dry-run"},
 	} {
 		err := run(args...)
@@ -104,6 +106,8 @@ func TestInvalidInputExitsValidation(t *testing.T) {
 		{"cves", "--cves", "CVE-2024-6387", "--counts", "--group-by", "version"},
 		{"cves", "--cves", "CVE-2024-6387", "--counts", "--days", "7"},
 		{"cves", "--cves", "CVE-2024-6387", "--counts", "--min-confidence", "40"},
+		{"cves", "--cves", "CVE-2024-6387", "--counts", "--limit", "500"},
+		{"cves", "--cves", "CVE-2024-6387", "--counts", "--all"},
 		{"cves", "--cves", "CVE-2024-6387", "--kev"},
 		{"cves", "--cves", "CVE-2024-6387", "--min-epss", "0.5"},
 		{"cves", "--top", "--cves", "CVE-2024-6387"},

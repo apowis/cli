@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/vulncheck-oss/cli/internal/errs"
 	"github.com/vulncheck-oss/cli/internal/output"
 	"github.com/vulncheck-oss/cli/pkg/i18n"
 	"github.com/vulncheck-oss/cli/pkg/targetintel"
@@ -51,6 +52,9 @@ func hostCommand() *cobra.Command {
 				return err
 			}
 			q.LookbackDays = days
+			if q.CIDR == "" && (cmd.Flags().Changed("limit") || all) {
+				return errs.Validation("--limit and --all apply only to a CIDR range; a single IP returns one host")
+			}
 			s, base, err := f.options(cmd, "")
 			if err != nil {
 				return err
@@ -95,11 +99,7 @@ func hostCommand() *cobra.Command {
 			defer func() { _ = c.Close() }()
 
 			if dryRun {
-				if err := renderEstimate(cmd, c, profile); err != nil {
-					return err
-				}
-
-				return renderEstimate(cmd, c, fps)
+				return renderHostEstimates(cmd, c, profile, fps)
 			}
 
 			pr, err := c.Run(cmd.Context(), profile)
@@ -143,6 +143,45 @@ func hostCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the estimates and exit without running the lookups")
 
 	return cmd
+}
+
+// hostEstimatePayload is the JSON emitted by host --dry-run for a single
+// IP: one document covering both lookups.
+type hostEstimatePayload struct {
+	SchemaVersion int                 `json:"schema_version"`
+	Estimates     []namedEstimateJSON `json:"estimates"`
+}
+
+type namedEstimateJSON struct {
+	Name string `json:"name"`
+	estimateResult
+}
+
+func renderHostEstimates(cmd *cobra.Command, c *targetintel.Client, profile, fps targetintel.QueryOptions) error {
+	r := output.FromCmd(cmd)
+	p := hostEstimatePayload{SchemaVersion: output.SchemaVersion}
+	for _, job := range []struct {
+		name string
+		opts targetintel.QueryOptions
+	}{{"host_profile", profile}, {"fingerprint_current", fps}} {
+		e, err := estimate(cmd, c, job.opts)
+		if err != nil {
+			return err
+		}
+		p.Estimates = append(p.Estimates, namedEstimateJSON{Name: job.name, estimateResult: e})
+	}
+	if r.IsJSON() {
+		return r.JSON(p)
+	}
+	for i, e := range p.Estimates {
+		if i > 0 {
+			r.Println("")
+		}
+		r.Stat("Lookup", e.Name)
+		printEstimate(r, e.estimateResult, profile)
+	}
+
+	return nil
 }
 
 func renderHost(r *output.Renderer, p hostPayload) error {
