@@ -350,9 +350,11 @@ var En = Copy{
 		product-level matches for versionless CPEs. Pass several CVEs in one
 		call: the inputs are scanned once however many are given.
 
-		The routine costs roughly the same whatever the window, so the dry run
-		and --max-cost apply exactly as for "query". Text mode shows a compact
-		column set; --json returns every column.
+		Tiers 20 and above are served from a nightly match snapshot, so a call
+		is cheap (a few GiB). Tier 10, and any CVE whose NVD CPE mapping changed
+		since the snapshot was built, are matched live and scan more. Use
+		--dry-run to see the estimate; --max-cost applies exactly as for "query".
+		Text mode shows a compact column set; --json returns every column.
 	`),
 	TargetIntelCvesExample: heredoc.Doc(`
 		$ vulncheck ti cves --cves CVE-2024-6387 --days 30
