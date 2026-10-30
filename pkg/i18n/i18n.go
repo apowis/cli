@@ -420,7 +420,7 @@ var En = Copy{
 		$ vulncheck ti product --vendor fortinet --days 7 --group-by country --json
 		$ vulncheck ti product --product "mini_httpd" --all --json > hosts.json
 	`),
-	TargetIntelHostShort: "What one host is running: listening ports, geolocation and current fingerprints",
+	TargetIntelHostShort: "What one host is running: listening ports, geolocation, current fingerprints and CVEs by confidence tier",
 	TargetIntelHostLong: heredoc.Doc(`
 		Looks one IPv4 address up in three point reads: host_profile for the
 		ports and protocols seen listening in the current scan window, with
