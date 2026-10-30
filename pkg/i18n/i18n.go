@@ -422,18 +422,30 @@ var En = Copy{
 	`),
 	TargetIntelHostShort: "What one host is running: listening ports, geolocation and current fingerprints",
 	TargetIntelHostLong: heredoc.Doc(`
-		Looks one IPv4 address up in two point reads: host_profile for the
+		Looks one IPv4 address up in three point reads: host_profile for the
 		ports and protocols seen listening in the current scan window, with
-		geolocation and ASN, and fingerprint_current for every product
+		geolocation and ASN; fingerprint_current for every product
 		identified in the host's most recent scan of each port within the
-		lookback window. Both tables are clustered on the host, so a lookup
-		bills well under 1 GiB.
+		lookback window; and cpe_cve_matches for the CVEs those products'
+		CPEs map to. All three are clustered on the host, so a lookup bills
+		about 1 GiB (under a cent).
 
 		Ports are those observed listening, bounded by what we probed: an
-		absent port means not seen listening, never closed. The cves column
-		lists rule-annotated CVEs only; version-range exposure for a CVE is
-		what "cves" answers. --json returns {query, found, profile,
-		fingerprints, jobs}.
+		absent port means not seen listening, never closed.
+
+		CVEs are scored on the same tier scale as "cves", the highest per
+		port and CVE: 40 for a rule-annotated CVE on a versioned,
+		probe-confirmed fingerprint, 30 for any other rule annotation or a
+		version match with no distro backport risk, 20 for a version match a
+		distro may have patched, 10 for a versionless product match. 40 and
+		30 are confirmed. Only ports fingerprinted within the lookback window
+		are scored. --min-confidence (default 20) drops lower tiers. CPE
+		matches come from the nightly cpe_cve_matches build, which also
+		matches a product's CPE aliases, so a host can list a CVE that
+		"cves" does not return for it.
+
+		--json returns {query, found, profile, fingerprints, cves,
+		cves_below_min_confidence, jobs}.
 
 		A CIDR of /16 or longer returns an inventory instead: one row per
 		host seen listening in the range, with its services and the distinct
@@ -445,6 +457,7 @@ var En = Copy{
 	TargetIntelHostExample: heredoc.Doc(`
 		$ vulncheck ti host 112.173.82.65
 		$ vulncheck ti host 112.173.82.65 --days 90 --json
+		$ vulncheck ti host 112.173.82.65 --min-confidence 30
 		$ vulncheck ti host 81.82.248.0/24
 		$ vulncheck ti host 81.82.0.0/16 --all --json > hosts.json
 		$ vulncheck ti host 112.173.82.65 --dry-run

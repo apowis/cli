@@ -43,6 +43,7 @@ func TestInvalidInputExitsValidation(t *testing.T) {
 	// the harness tells the two apart.
 	for _, args := range [][]string{
 		{"host", "1.2.3.4", "--dry-run"},
+		{"host", "1.2.3.4", "--min-confidence", "10", "--dry-run"},
 		{"host", "10.0.0.5/24", "--dry-run"},
 		{"cves", "--cves", "CVE-2024-6387", "--dry-run"},
 		{"cves", "--cves", "CVE-2024-6387", "--counts", "--dry-run"},
@@ -83,6 +84,9 @@ func TestInvalidInputExitsValidation(t *testing.T) {
 		{"host", "10.0.0.0/24", "--days", "-1"},
 		{"host", "10.0.0.0/24", "--limit", "0"},
 		{"host", "10.0.0.0/24", "--limit", "-1"},
+		{"host", "1.2.3.4", "--min-confidence", "25"},
+		{"host", "1.2.3.4", "--min-confidence", "x"},
+		{"host", "10.0.0.0/24", "--min-confidence", "30"},
 
 		// Shared query flags
 		{"host", "1.2.3.4", "--max-cost", "-1"},

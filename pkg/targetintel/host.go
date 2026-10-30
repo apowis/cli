@@ -3,6 +3,7 @@ package targetintel
 import (
 	"encoding/binary"
 	"net/netip"
+	"sort"
 	"strings"
 
 	"cloud.google.com/go/bigquery"
@@ -16,8 +17,9 @@ const MaxHostPrefix = 16
 // HostQuery describes a host lookup: one IP, or a CIDR range.
 type HostQuery struct {
 	IP           string `json:"ip,omitempty"`
-	CIDR         string `json:"cidr,omitempty"`
-	LookbackDays int    `json:"lookback_days"`
+	CIDR          string `json:"cidr,omitempty"`
+	LookbackDays  int    `json:"lookback_days"`
+	MinConfidence int    `json:"min_confidence,omitempty"`
 }
 
 // ParseHostTarget accepts an IPv4 address or an IPv4 CIDR of /16 or
@@ -135,13 +137,13 @@ func (s Settings) HostProfile(q HostQuery) (string, []bigquery.QueryParameter, e
 
 // HostFingerprintColumns are the columns HostFingerprints selects, in order.
 var HostFingerprintColumns = []string{
-	"port", "protocol", "vendor", "product", "version", "cpe", "confidence", "rule_id", "rule_source", "cves", "hostname", "timestamp",
+	"port", "protocol", "vendor", "product", "version", "cpe", "confidence", "rule_id", "rule_source", "cves", "probe_ok", "hostname", "timestamp",
 }
 
 // HostFingerprints builds the point lookup of one host's current
 // fingerprints: every product identified in its most recent scan of each
 // port within the lookback window. cves holds the rule-annotated CVEs only;
-// version-range exposure is what the cves command answers.
+// HostCVEs adds the CPE matches and scores both.
 func (s Settings) HostFingerprints(q HostQuery) (string, []bigquery.QueryParameter, error) {
 	ip, err := ParseHostIP(q.IP)
 	if err != nil {
@@ -161,6 +163,117 @@ func (s Settings) HostFingerprints(q HostQuery) (string, []bigquery.QueryParamet
 	}
 
 	return sql, params, nil
+}
+
+// HostCPEMatches builds the point lookup of one host's CPE-to-CVE matches
+// in cpe_cve_matches, clustered on ip_int and port, so a host bills about
+// 90 MB. Each row carries the tier the cves command scores a CPE match at:
+// 30 or 20 for a version match, 10 for a versionless product match.
+func (s Settings) HostCPEMatches(q HostQuery) (string, []bigquery.QueryParameter, error) {
+	ip, err := ParseHostIP(q.IP)
+	if err != nil {
+		return "", nil, err
+	}
+	sql := "SELECT port, cpe, cve_id, confidence, `match`" +
+		" FROM " + s.Table("cpe_cve_matches") +
+		" WHERE ip_int = NET.IPV4_TO_INT64(NET.IP_FROM_STRING(@ip))" +
+		" ORDER BY port, cve_id"
+
+	return sql, []bigquery.QueryParameter{{Name: "ip", Value: ip}}, nil
+}
+
+// HostCVE is one CVE a host is exposed to on one port, on the confidence
+// tier scale the cves command uses.
+type HostCVE struct {
+	Port       int64  `json:"port"`
+	CVEID      string `json:"cve_id"`
+	Confidence int64  `json:"confidence"`
+	Match      string `json:"match"`
+	CPE        string `json:"cpe"`
+}
+
+// HostCVEs scores a host's CVEs from its fingerprint rows and CPE match
+// rows, keeping the highest tier per port and CVE. A rule-annotated CVE
+// scores 40 (match "probe") when the fingerprint has a version and its
+// probe succeeded, else 30 ("rule"), as fingerprint_cves_by_host does; a
+// CPE match keeps its stored tier. CPE matches carry no timestamp, so only
+// those on a port fingerprinted within the lookback window are kept. The
+// result is ordered by port, then tier (highest first), then CVE, and
+// below holds how many CVEs scored under minConfidence were dropped.
+func HostCVEs(fingerprints, matches []map[string]any, minConfidence int64) (cves []HostCVE, below int) {
+	type key struct {
+		port int64
+		cve  string
+	}
+	best := map[key]HostCVE{}
+	keep := func(c HostCVE) {
+		k := key{c.Port, c.CVEID}
+		if cur, ok := best[k]; !ok || c.Confidence > cur.Confidence {
+			best[k] = c
+		}
+	}
+	ports := map[int64]bool{}
+	for _, fp := range fingerprints {
+		port, _ := fp["port"].(int64)
+		ports[port] = true
+		version, _ := fp["version"].(string)
+		probeOK, _ := fp["probe_ok"].(bool)
+		conf, match := int64(30), "rule"
+		if version != "" && probeOK {
+			conf, match = 40, "probe"
+		}
+		cpe, _ := fp["cpe"].(string)
+		ids, _ := fp["cves"].([]any)
+		for _, id := range ids {
+			if s, ok := id.(string); ok && s != "" {
+				keep(HostCVE{Port: port, CVEID: s, Confidence: conf, Match: match, CPE: cpe})
+			}
+		}
+	}
+	for _, m := range matches {
+		port, _ := m["port"].(int64)
+		id, _ := m["cve_id"].(string)
+		if !ports[port] || id == "" {
+			continue
+		}
+		conf, _ := m["confidence"].(int64)
+		match, _ := m["match"].(string)
+		cpe, _ := m["cpe"].(string)
+		keep(HostCVE{Port: port, CVEID: id, Confidence: conf, Match: match, CPE: cpe})
+	}
+
+	cves = make([]HostCVE, 0, len(best))
+	for _, c := range best {
+		if c.Confidence < minConfidence {
+			below++
+
+			continue
+		}
+		cves = append(cves, c)
+	}
+	sort.Slice(cves, func(i, j int) bool {
+		a, b := cves[i], cves[j]
+		if a.Port != b.Port {
+			return a.Port < b.Port
+		}
+		if a.Confidence != b.Confidence {
+			return a.Confidence > b.Confidence
+		}
+
+		return a.CVEID < b.CVEID
+	})
+
+	return cves, below
+}
+
+// ValidMinConfidence reports whether n is one of the confidence tiers.
+func ValidMinConfidence(n int) bool {
+	switch n {
+	case 10, 20, 30, 40:
+		return true
+	}
+
+	return false
 }
 
 // HostRangeColumns are the columns HostRange selects, in order.

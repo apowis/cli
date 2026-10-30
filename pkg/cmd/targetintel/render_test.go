@@ -53,6 +53,7 @@ func TestRenderHost(t *testing.T) {
 		}
 	}
 	fps := []map[string]any{{"port": int64(22), "protocol": "ssh", "vendor": "openbsd", "product": "openssh", "version": "9.6"}}
+	cves := []targetintel.HostCVE{{Port: 22, CVEID: "CVE-2024-6387", Confidence: 40, Match: "probe", CPE: "cpe:2.3:a:openbsd:openssh:9.6"}}
 
 	tests := []struct {
 		name    string
@@ -72,7 +73,7 @@ func TestRenderHost(t *testing.T) {
 		},
 		{
 			name: "truncated profile with fingerprints",
-			p:    hostPayload{Query: targetintel.HostQuery{IP: "1.2.3.4", LookbackDays: 30}, Found: true, Profile: profile(true), Fingerprints: fps, Jobs: jobs},
+			p:    hostPayload{Query: targetintel.HostQuery{IP: "1.2.3.4", LookbackDays: 30, MinConfidence: 20}, Found: true, Profile: profile(true), Fingerprints: fps, CVEs: cves, CVEsBelow: 2, Jobs: jobs},
 			wantOut: []string{
 				"Host: 1.2.3.4",
 				"Location: United States (US)",
@@ -82,22 +83,23 @@ func TestRenderHost(t *testing.T) {
 				"Identified: 1",
 				"transport", "ssh", "udp", "dns",
 				"openssh", "9.6",
-				"cves lists rule-annotated CVEs only",
+				"CVE-2024-6387", "probe",
+				"1 CVEs at confidence 20 or above; 40 and 30 are confirmed. 2 more below it; lower --min-confidence to see them.",
 			},
 			wantErr: []string{"The port list is truncated"},
 		},
 		{
 			name:    "no profile but fingerprints",
-			p:       hostPayload{Query: targetintel.HostQuery{IP: "1.2.3.4", LookbackDays: 30}, Found: true, Fingerprints: fps, Jobs: jobs},
-			wantOut: []string{"openssh", "9.6", "rule_id", "cves lists rule-annotated CVEs only"},
-			notOut:  []string{"Host:", "transport"},
+			p:       hostPayload{Query: targetintel.HostQuery{IP: "1.2.3.4", LookbackDays: 30, MinConfidence: 30}, Found: true, Fingerprints: fps, CVEs: []targetintel.HostCVE{}, Jobs: jobs},
+			wantOut: []string{"openssh", "9.6", "rule_id", "No CVEs at confidence 30 or above."},
+			notOut:  []string{"Host:", "transport", "more below it"},
 			wantErr: []string{"1.2.3.4 has no host profile row; showing fingerprints only."},
 		},
 		{
 			name:    "profile without fingerprints",
 			p:       hostPayload{Query: targetintel.HostQuery{IP: "1.2.3.4", LookbackDays: 7}, Found: true, Profile: profile(false), Fingerprints: []map[string]any{}, Jobs: jobs},
 			wantOut: []string{"Host: 1.2.3.4", "ssh", "No fingerprints in the last 7 days."},
-			notOut:  []string{"rule_id", "cves lists"},
+			notOut:  []string{"rule_id", "cve_id"},
 			noWarn:  true,
 		},
 	}

@@ -530,6 +530,15 @@ var hostFingerprintSchema = []bqfake.Field{
 	{Name: "cpe", Type: "STRING"},
 	{Name: "rule_id", Type: "STRING"},
 	{Name: "cves", Type: "STRING", Mode: "REPEATED"},
+	{Name: "probe_ok", Type: "BOOLEAN"},
+}
+
+var hostCPEMatchSchema = []bqfake.Field{
+	{Name: "port", Type: "INTEGER"},
+	{Name: "cpe", Type: "STRING"},
+	{Name: "cve_id", Type: "STRING"},
+	{Name: "confidence", Type: "INTEGER"},
+	{Name: "match", Type: "STRING"},
 }
 
 func hostProfileRow() bqfake.Row {
@@ -545,11 +554,18 @@ func hostProfileRow() bqfake.Row {
 }
 
 // routeHost answers the host_profile and fingerprint_current lookups with
-// the given rows, routing on the SQL text.
+// the given rows, and cpe_cve_matches with none, routing on the SQL text.
 func routeHost(s *bqfake.Server, profile, fingerprints []bqfake.Row) {
+	routeHostCVEs(s, profile, fingerprints, nil)
+}
+
+// routeHostCVEs is routeHost with cpe_cve_matches answered by matches.
+func routeHostCVEs(s *bqfake.Server, profile, fingerprints, matches []bqfake.Row) {
 	s.HandleQuery(func(job *bq.Job) bqfake.Query {
 		sql := jobSQL(job)
 		switch {
+		case strings.Contains(sql, ".cpe_cve_matches`"):
+			return bqfake.Query{Schema: hostCPEMatchSchema, Rows: matches, Stats: bqfake.Stats{TotalBytesBilled: 5 << 20, TotalBytesProcessed: 1 << 20}}
 		case strings.Contains(sql, ".fingerprint_current`"):
 			return bqfake.Query{Schema: hostFingerprintSchema, Rows: fingerprints, Stats: bqfake.Stats{TotalBytesBilled: 20 << 20, TotalBytesProcessed: 1 << 30}}
 		case strings.Contains(sql, ".host_profile`"):
@@ -561,24 +577,30 @@ func routeHost(s *bqfake.Server, profile, fingerprints []bqfake.Row) {
 }
 
 func TestE2EHostJSON(t *testing.T) {
-	fps := []bqfake.Row{{"port": 22, "protocol": "ssh", "vendor": "openbsd", "product": "openssh", "version": "9.6", "cves": []string{"CVE-2024-6387"}}}
+	fps := []bqfake.Row{{"port": 22, "protocol": "ssh", "vendor": "openbsd", "product": "openssh", "version": "9.6", "probe_ok": true, "cves": []string{"CVE-2024-6387"}}}
+	matches := []bqfake.Row{
+		{"port": 22, "cpe": "cpe:2.3:a:openbsd:openssh:9.6", "cve_id": "CVE-2024-6387", "confidence": 30, "match": "version"},
+		{"port": 22, "cpe": "cpe:2.3:a:openbsd:openssh:9.6", "cve_id": "CVE-2023-51385", "confidence": 20, "match": "version"},
+		{"port": 22, "cpe": "cpe:2.3:a:openbsd:openssh:-", "cve_id": "CVE-2008-3844", "confidence": 10, "match": "product"},
+	}
 	tests := []struct {
 		name      string
 		profile   []bqfake.Row
 		fps       []bqfake.Row
 		found     bool
 		wantFPs   int
+		wantCVEs  int
 		noProfile bool
 	}{
-		{name: "found", profile: []bqfake.Row{hostProfileRow()}, fps: fps, found: true, wantFPs: 1},
+		{name: "found", profile: []bqfake.Row{hostProfileRow()}, fps: fps, found: true, wantFPs: 1, wantCVEs: 2},
 		{name: "profile only", profile: []bqfake.Row{hostProfileRow()}, found: true},
-		{name: "fingerprints only", fps: fps, found: true, wantFPs: 1, noProfile: true},
+		{name: "fingerprints only", fps: fps, found: true, wantFPs: 1, wantCVEs: 2, noProfile: true},
 		{name: "not found", found: false, noProfile: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := fakeBQ(t)
-			routeHost(s, tt.profile, tt.fps)
+			routeHostCVEs(s, tt.profile, tt.fps, matches)
 
 			stdout, _, err := runTI(t, output.ModeJSON, "host", "1.2.3.4")
 			require.NoError(t, err)
@@ -586,10 +608,22 @@ func TestE2EHostJSON(t *testing.T) {
 			got := decodeOne(t, stdout)
 			assert.InDelta(t, output.SchemaVersion, got["schema_version"], 0)
 			assert.Equal(t, tt.found, got["found"])
-			assert.Equal(t, map[string]any{"ip": "1.2.3.4", "lookback_days": float64(30)}, got["query"])
+			assert.Equal(t, map[string]any{"ip": "1.2.3.4", "lookback_days": float64(30), "min_confidence": float64(20)}, got["query"])
 			fpsGot, ok := got["fingerprints"].([]any)
 			require.True(t, ok, "fingerprints is always an array, never null: %v", got["fingerprints"])
 			assert.Len(t, fpsGot, tt.wantFPs)
+			cvesGot, ok := got["cves"].([]any)
+			require.True(t, ok, "cves is always an array, never null: %v", got["cves"])
+			require.Len(t, cvesGot, tt.wantCVEs)
+			if tt.wantCVEs > 0 {
+				assert.Equal(t, map[string]any{
+					"port": float64(22), "cve_id": "CVE-2024-6387", "confidence": float64(40), "match": "probe", "cpe": "",
+				}, cvesGot[0], "the probe-confirmed rule annotation beats the tier-30 CPE match")
+				assert.Equal(t, "CVE-2023-51385", cvesGot[1].(map[string]any)["cve_id"])
+				assert.InDelta(t, 1, got["cves_below_min_confidence"], 0, "the tier-10 product match is hidden")
+			} else {
+				assert.InDelta(t, 0, got["cves_below_min_confidence"], 0, "CPE matches on ports not fingerprinted are ignored")
+			}
 			if tt.noProfile {
 				assert.Nil(t, got["profile"])
 			} else {
@@ -599,22 +633,25 @@ func TestE2EHostJSON(t *testing.T) {
 			}
 
 			jobs := s.Jobs()
-			require.Len(t, jobs, 2)
+			require.Len(t, jobs, 3)
 			assert.Contains(t, jobSQL(jobs[0]), "host_profile")
 			assert.Contains(t, jobSQL(jobs[1]), "fingerprint_current")
+			assert.Contains(t, jobSQL(jobs[2]), "cpe_cve_matches")
 			assert.Equal(t, map[string]any{"ip": "1.2.3.4"}, jobParams(jobs[0]))
 			assert.Equal(t, map[string]any{"ip": "1.2.3.4", "lookback_days": "30"}, jobParams(jobs[1]))
+			assert.Equal(t, map[string]any{"ip": "1.2.3.4"}, jobParams(jobs[2]))
 
 			gotJobs, ok := got["jobs"].([]any)
 			require.True(t, ok, got)
-			require.Len(t, gotJobs, 2)
-			for i, name := range []string{"host_profile", "fingerprint_current"} {
+			require.Len(t, gotJobs, 3)
+			for i, name := range []string{"host_profile", "fingerprint_current", "cpe_cve_matches"} {
 				j := gotJobs[i].(map[string]any)
 				assert.Equal(t, name, j["name"])
 				assert.Equal(t, jobs[i].JobReference.JobId, j["job_id"])
 			}
 			assert.InDelta(t, 10<<20, gotJobs[0].(map[string]any)["bytes_billed"], 0)
 			assert.InDelta(t, 20<<20, gotJobs[1].(map[string]any)["bytes_billed"], 0)
+			assert.InDelta(t, 5<<20, gotJobs[2].(map[string]any)["bytes_billed"], 0)
 		})
 	}
 }
@@ -622,12 +659,17 @@ func TestE2EHostJSON(t *testing.T) {
 func TestE2EHostText(t *testing.T) {
 	t.Run("found", func(t *testing.T) {
 		s := fakeBQ(t)
-		routeHost(s, []bqfake.Row{hostProfileRow()}, []bqfake.Row{{"port": 22, "protocol": "ssh", "vendor": "openbsd", "product": "openssh", "version": "9.6"}})
+		routeHostCVEs(s, []bqfake.Row{hostProfileRow()},
+			[]bqfake.Row{{"port": 22, "protocol": "ssh", "vendor": "openbsd", "product": "openssh", "version": "9.6"}},
+			[]bqfake.Row{
+				{"port": 22, "cpe": "cpe:2.3:a:openbsd:openssh:9.6", "cve_id": "CVE-2024-6387", "confidence": 30, "match": "version"},
+				{"port": 22, "cpe": "cpe:2.3:a:openbsd:openssh:-", "cve_id": "CVE-2008-3844", "confidence": 10, "match": "product"},
+			})
 
 		stdout, stderr, err := runTI(t, output.ModeText, "host", "1.2.3.4")
 		require.NoError(t, err)
-		total := float64(30<<20) / (1 << 40) * targetintel.DefaultPricePerTiB
-		assert.Contains(t, stdout, "Billed "+targetintel.FormatCost(total)+" across 2 lookups")
+		total := float64(35<<20) / (1 << 40) * targetintel.DefaultPricePerTiB
+		assert.Contains(t, stdout, "Billed "+targetintel.FormatCost(total)+" across 3 lookups")
 		assert.Contains(t, stdout, "Host: 1.2.3.4")
 		assert.Contains(t, stdout, "Location: United States (US)")
 		assert.Contains(t, stdout, "Network: 15169 GOOGLE (google.com)")
@@ -636,7 +678,22 @@ func TestE2EHostText(t *testing.T) {
 		assert.Contains(t, stdout, "transport")
 		assert.Contains(t, stdout, "udp")
 		assert.Contains(t, stdout, "openssh")
+		assert.Contains(t, stdout, "CVE-2024-6387")
+		assert.NotContains(t, stdout, "CVE-2008-3844", "tier 10 is below the default --min-confidence")
+		assert.Contains(t, stdout, "1 CVEs at confidence 20 or above; 40 and 30 are confirmed. 1 more below it")
 		assert.Empty(t, stderr)
+	})
+
+	t.Run("min confidence 10", func(t *testing.T) {
+		s := fakeBQ(t)
+		routeHostCVEs(s, nil,
+			[]bqfake.Row{{"port": 22, "protocol": "ssh", "vendor": "openbsd", "product": "openssh"}},
+			[]bqfake.Row{{"port": 22, "cpe": "cpe:2.3:a:openbsd:openssh:-", "cve_id": "CVE-2008-3844", "confidence": 10, "match": "product"}})
+
+		stdout, _, err := runTI(t, output.ModeText, "host", "1.2.3.4", "--min-confidence", "10")
+		require.NoError(t, err)
+		assert.Contains(t, stdout, "CVE-2008-3844")
+		assert.Contains(t, stdout, "product")
 	})
 
 	t.Run("not found", func(t *testing.T) {
@@ -645,7 +702,7 @@ func TestE2EHostText(t *testing.T) {
 
 		stdout, stderr, err := runTI(t, output.ModeText, "host", "1.2.3.4")
 		require.NoError(t, err)
-		assert.Contains(t, stdout, "across 2 lookups")
+		assert.Contains(t, stdout, "across 3 lookups")
 		assert.NotContains(t, stdout, "Host:")
 		assert.Contains(t, stderr, "1.2.3.4 was not seen listening on any port in the current scan window.")
 	})
@@ -663,16 +720,17 @@ func TestE2EHostDryRun(t *testing.T) {
 		assert.InDelta(t, output.SchemaVersion, got["schema_version"], 0)
 		ests, ok := got["estimates"].([]any)
 		require.True(t, ok, got)
-		require.Len(t, ests, 2)
+		require.Len(t, ests, 3)
 		profile, fps := ests[0].(map[string]any), ests[1].(map[string]any)
 		assert.Equal(t, "host_profile", profile["name"])
 		assert.Equal(t, "fingerprint_current", fps["name"])
+		assert.Equal(t, "cpe_cve_matches", ests[2].(map[string]any)["name"])
 		assert.Equal(t, false, profile["within_limit"], "1 TiB at $6.25 is over the $1 cap")
 		assert.Equal(t, true, fps["within_limit"])
 		assert.InDelta(t, 1<<40, profile["estimate"].(map[string]any)["bytes_processed"], 0)
 
 		jobs := s.Jobs()
-		require.Len(t, jobs, 2)
+		require.Len(t, jobs, 3)
 		for _, j := range jobs {
 			assert.True(t, j.Configuration.DryRun)
 		}
@@ -686,6 +744,7 @@ func TestE2EHostDryRun(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, stdout, "Lookup: host_profile")
 		assert.Contains(t, stdout, "Lookup: fingerprint_current")
+		assert.Contains(t, stdout, "Lookup: cpe_cve_matches")
 		assert.Contains(t, stdout, "Max cost: $1.00 (within limit)")
 		assert.Contains(t, stderr, "The estimate exceeds the max cost $1.00.")
 	})

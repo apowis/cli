@@ -29,7 +29,15 @@ type hostPayload struct {
 	Found         bool                  `json:"found"`
 	Profile       map[string]any        `json:"profile"`
 	Fingerprints  []map[string]any      `json:"fingerprints"`
+	CVEs          []targetintel.HostCVE `json:"cves"`
+	CVEsBelow     int                   `json:"cves_below_min_confidence"`
 	Jobs          []hostJob             `json:"jobs"`
+}
+
+// namedLookup is one of the queries behind a single-IP host lookup.
+type namedLookup struct {
+	name string
+	opts targetintel.QueryOptions
 }
 
 // rangeTextColumns is the column set of the one-row-per-host inventory.
@@ -37,11 +45,11 @@ var rangeTextColumns = []string{"ip", "country_code", "asn", "last_seen", "port_
 
 func hostCommand() *cobra.Command {
 	var f queryFlags
-	var days, limit int
+	var days, limit, minConfidence int
 	var all, dryRun bool
 
 	cmd := &cobra.Command{
-		Use:     "host <ipv4|cidr> [--days <n>]",
+		Use:     "host <ipv4|cidr> [--days <n>] [--min-confidence <10|20|30|40>]",
 		Short:   i18n.C.TargetIntelHostShort,
 		Long:    i18n.C.TargetIntelHostLong,
 		Example: i18n.C.TargetIntelHostExample,
@@ -54,6 +62,15 @@ func hostCommand() *cobra.Command {
 			q.LookbackDays = days
 			if q.CIDR == "" && (cmd.Flags().Changed("limit") || all) {
 				return errs.Validation("--limit and --all apply only to a CIDR range; a single IP returns one host")
+			}
+			if q.CIDR != "" && cmd.Flags().Changed("min-confidence") {
+				return errs.Validation("--min-confidence applies only to a single IP; a CIDR range lists no CVEs")
+			}
+			if q.CIDR == "" {
+				if !targetintel.ValidMinConfidence(minConfidence) {
+					return errs.Validation("--min-confidence must be one of 10, 20, 30 or 40")
+				}
+				q.MinConfidence = minConfidence
 			}
 			s, base, err := f.options(cmd, "")
 			if err != nil {
@@ -91,6 +108,12 @@ func hostCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			matches := base
+			matches.SQL, matches.Params, err = s.HostCPEMatches(q)
+			if err != nil {
+				return err
+			}
+			lookups := []namedLookup{{"host_profile", profile}, {"fingerprint_current", fps}, {"cpe_cve_matches", matches}}
 
 			c, err := newClient(cmd.Context(), s)
 			if err != nil {
@@ -99,28 +122,23 @@ func hostCommand() *cobra.Command {
 			defer func() { _ = c.Close() }()
 
 			if dryRun {
-				return renderHostEstimates(cmd, c, profile, fps)
+				return renderHostEstimates(cmd, c, lookups)
 			}
 
-			pr, err := c.Run(cmd.Context(), profile)
-			if err != nil {
-				return err
+			results := make([]*targetintel.Result, 0, len(lookups))
+			p := hostPayload{SchemaVersion: output.SchemaVersion, Query: q}
+			for _, l := range lookups {
+				res, err := c.Run(cmd.Context(), l.opts)
+				if err != nil {
+					return err
+				}
+				results = append(results, res)
+				p.Jobs = append(p.Jobs, hostJob{Name: l.name, JobID: res.JobID, BytesBilled: res.BytesBilled, CostUSD: res.CostUSD, CacheHit: res.CacheHit})
 			}
-			fr, err := c.Run(cmd.Context(), fps)
-			if err != nil {
-				return err
-			}
-
-			p := hostPayload{
-				SchemaVersion: output.SchemaVersion,
-				Query:         q,
-				Found:         len(pr.Rows) > 0 || len(fr.Rows) > 0,
-				Fingerprints:  fr.Rows,
-				Jobs: []hostJob{
-					{Name: "host_profile", JobID: pr.JobID, BytesBilled: pr.BytesBilled, CostUSD: pr.CostUSD, CacheHit: pr.CacheHit},
-					{Name: "fingerprint_current", JobID: fr.JobID, BytesBilled: fr.BytesBilled, CostUSD: fr.CostUSD, CacheHit: fr.CacheHit},
-				},
-			}
+			pr, fr, mr := results[0], results[1], results[2]
+			p.Found = len(pr.Rows) > 0 || len(fr.Rows) > 0
+			p.Fingerprints = fr.Rows
+			p.CVEs, p.CVEsBelow = targetintel.HostCVEs(fr.Rows, mr.Rows, int64(minConfidence))
 			if len(pr.Rows) > 0 {
 				p.Profile = pr.Rows[0]
 			}
@@ -138,6 +156,7 @@ func hostCommand() *cobra.Command {
 	}
 	f.bindCommon(cmd)
 	cmd.Flags().IntVar(&days, "days", 30, "Lookback window in days for fingerprints")
+	cmd.Flags().IntVar(&minConfidence, "min-confidence", 20, "Minimum CVE confidence tier for a single IP: 40, 30, 20 (default) or 10 (adds versionless product matches)")
 	cmd.Flags().IntVar(&limit, "limit", 100, "Max hosts to return for a CIDR range")
 	cmd.Flags().BoolVar(&all, "all", false, "Return every host in the range (ignores --limit)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the estimates and exit without running the lookups")
@@ -146,7 +165,7 @@ func hostCommand() *cobra.Command {
 }
 
 // hostEstimatePayload is the JSON emitted by host --dry-run for a single
-// IP: one document covering both lookups.
+// IP: one document covering every lookup.
 type hostEstimatePayload struct {
 	SchemaVersion int                 `json:"schema_version"`
 	Estimates     []namedEstimateJSON `json:"estimates"`
@@ -157,13 +176,10 @@ type namedEstimateJSON struct {
 	estimateResult
 }
 
-func renderHostEstimates(cmd *cobra.Command, c *targetintel.Client, profile, fps targetintel.QueryOptions) error {
+func renderHostEstimates(cmd *cobra.Command, c *targetintel.Client, lookups []namedLookup) error {
 	r := output.FromCmd(cmd)
 	p := hostEstimatePayload{SchemaVersion: output.SchemaVersion}
-	for _, job := range []struct {
-		name string
-		opts targetintel.QueryOptions
-	}{{"host_profile", profile}, {"fingerprint_current", fps}} {
+	for _, job := range lookups {
 		e, err := estimate(cmd, c, job.opts)
 		if err != nil {
 			return err
@@ -178,14 +194,18 @@ func renderHostEstimates(cmd *cobra.Command, c *targetintel.Client, profile, fps
 			r.Println("")
 		}
 		r.Stat("Lookup", e.Name)
-		printEstimate(r, e.estimateResult, profile)
+		printEstimate(r, e.estimateResult, lookups[i].opts)
 	}
 
 	return nil
 }
 
 func renderHost(r *output.Renderer, p hostPayload) error {
-	r.Info("Billed %s across %d lookups", targetintel.FormatCost(p.Jobs[0].CostUSD+p.Jobs[1].CostUSD), len(p.Jobs))
+	var cost float64
+	for _, j := range p.Jobs {
+		cost += j.CostUSD
+	}
+	r.Info("Billed %s across %d lookups", targetintel.FormatCost(cost), len(p.Jobs))
 	if !p.Found {
 		r.Warn("%s was not seen listening on any port in the current scan window.", p.Query.IP)
 
@@ -215,11 +235,32 @@ func renderHost(r *output.Renderer, p hostPayload) error {
 
 		return nil
 	}
-	headers := []string{"port", "protocol", "vendor", "product", "version", "cpe", "rule_id", "cves"}
+	headers := []string{"port", "protocol", "vendor", "product", "version", "cpe", "rule_id"}
 	r.Println(rowTable(headers, p.Fingerprints))
-	r.Info("cves lists rule-annotated CVEs only; for version-range exposure use `vulncheck ti cves`. --json carries every field.")
+
+	r.Println("")
+	if len(p.CVEs) == 0 {
+		r.Info("No CVEs at confidence %d or above.%s", p.Query.MinConfidence, belowNote(p))
+
+		return nil
+	}
+	rows := make([][]string, 0, len(p.CVEs))
+	for _, c := range p.CVEs {
+		rows = append(rows, []string{fmt.Sprint(c.Port), c.CVEID, fmt.Sprint(c.Confidence), c.Match, c.CPE})
+	}
+	r.Println(ui.Table([]string{"port", "cve_id", "confidence", "match", "cpe"}, rows))
+	r.Info("%d CVEs at confidence %d or above; 40 and 30 are confirmed.%s --json carries every field.", len(p.CVEs), p.Query.MinConfidence, belowNote(p))
 
 	return nil
+}
+
+// belowNote names the CVEs hidden by --min-confidence, if any.
+func belowNote(p hostPayload) string {
+	if p.CVEsBelow == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf(" %d more below it; lower --min-confidence to see them.", p.CVEsBelow)
 }
 
 // serviceRows flattens host_profile.services, an array of {port, service,

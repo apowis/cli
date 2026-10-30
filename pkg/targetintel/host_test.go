@@ -47,6 +47,16 @@ func TestHostQueries(t *testing.T) {
 	require.Len(t, params, 2)
 	assert.Equal(t, int64(30), params[1].Value)
 
+	assert.Contains(t, sql, "probe_ok", "tier 40 needs probe_ok")
+
+	sql, params, err = s.HostCPEMatches(HostQuery{IP: "1.2.3.4"})
+	require.NoError(t, err)
+	assert.Contains(t, sql, "FROM `p.d.cpe_cve_matches` WHERE ip_int = NET.IPV4_TO_INT64(NET.IP_FROM_STRING(@ip))")
+	require.Len(t, params, 1)
+	assert.Equal(t, "1.2.3.4", params[0].Value)
+	_, _, err = s.HostCPEMatches(HostQuery{IP: "nope"})
+	requireValidation(t, err)
+
 	_, _, err = s.HostFingerprints(HostQuery{IP: "1.2.3.4"})
 	requireValidation(t, err)
 	assert.ErrorContains(t, err, "--days must be at least 1")
@@ -205,4 +215,43 @@ func TestCIDRBounds(t *testing.T) {
 		_, _, err := Settings{Project: "p", Dataset: "d"}.HostRange(HostQuery{CIDR: bad, LookbackDays: 30})
 		requireValidation(t, err, bad)
 	}
+}
+
+func TestHostCVEs(t *testing.T) {
+	t.Parallel()
+	fps := []map[string]any{
+		// Versioned and probe-confirmed: its annotations score 40.
+		{"port": int64(22), "version": "9.6", "probe_ok": true, "cpe": "cpe:ssh", "cves": []any{"CVE-A", "CVE-B"}},
+		// No version: a rule annotation scores 30 however the probe went.
+		{"port": int64(80), "version": "", "probe_ok": true, "cpe": "cpe:web", "cves": []any{"CVE-C", nil, ""}},
+		// Versioned but the probe failed: 30.
+		{"port": int64(443), "version": "1.0", "probe_ok": false, "cves": []any{"CVE-D"}},
+	}
+	matches := []map[string]any{
+		{"port": int64(22), "cve_id": "CVE-A", "confidence": int64(30), "match": "version", "cpe": "cpe:ssh"}, // loses to the 40 rule
+		{"port": int64(80), "cve_id": "CVE-C", "confidence": int64(20), "match": "version", "cpe": "cpe:web"}, // loses to the 30 rule
+		{"port": int64(80), "cve_id": "CVE-E", "confidence": int64(20), "match": "version", "cpe": "cpe:web"},
+		{"port": int64(80), "cve_id": "CVE-F", "confidence": int64(10), "match": "product", "cpe": "cpe:web"},
+		{"port": int64(443), "cve_id": "CVE-D", "confidence": int64(30), "match": "version", "cpe": "cpe:tls"}, // ties the rule, which stays
+		{"port": int64(8080), "cve_id": "CVE-G", "confidence": int64(30), "match": "version"},                 // port not fingerprinted in the window
+	}
+
+	got, below := HostCVEs(fps, matches, 20)
+	assert.Equal(t, []HostCVE{
+		{Port: 22, CVEID: "CVE-A", Confidence: 40, Match: "probe", CPE: "cpe:ssh"},
+		{Port: 22, CVEID: "CVE-B", Confidence: 40, Match: "probe", CPE: "cpe:ssh"},
+		{Port: 80, CVEID: "CVE-C", Confidence: 30, Match: "rule", CPE: "cpe:web"},
+		{Port: 80, CVEID: "CVE-E", Confidence: 20, Match: "version", CPE: "cpe:web"},
+		{Port: 443, CVEID: "CVE-D", Confidence: 30, Match: "rule"},
+	}, got)
+	assert.Equal(t, 1, below, "CVE-F at tier 10 is dropped and counted")
+
+	got, below = HostCVEs(fps, matches, 10)
+	assert.Len(t, got, 6)
+	assert.Zero(t, below)
+
+	got, below = HostCVEs(nil, nil, 20)
+	assert.NotNil(t, got, "an empty result is an empty slice, never nil")
+	assert.Empty(t, got)
+	assert.Zero(t, below)
 }
