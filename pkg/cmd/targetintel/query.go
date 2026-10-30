@@ -36,11 +36,24 @@ func (f *queryFlags) bindCommon(cmd *cobra.Command) {
 	cmd.Flags().Float64Var(&f.maxCost, "max-cost", targetintel.DefaultMaxCostUSD,
 		"Max cost in USD billed per query, enforced by BigQuery as a bytes-billed cap: a job that would bill more fails before anything is charged (env: "+targetintel.EnvMaxCost+"; 0 disables the cap)")
 	cmd.Flags().BoolVar(&f.noCache, "no-cache", false, "Disable the BigQuery result cache")
-	cmd.Flags().DurationVar(&f.timeout, "timeout", 5*time.Minute, "Job timeout")
+	cmd.Flags().DurationVar(&f.timeout, "timeout", 5*time.Minute, "Job timeout (0 for none)")
 }
 
-// readSQL resolves the statement from --query, --from-file or piped stdin.
+// readSQL resolves the statement from --query, --from-file or piped stdin
+// and rejects one that is empty or only whitespace.
 func (f *queryFlags) readSQL(cmd *cobra.Command, stdin io.Reader) (string, error) {
+	sql, err := f.sqlSource(cmd, stdin)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(sql) == "" {
+		return "", errs.Validation("the SQL statement is empty")
+	}
+
+	return sql, nil
+}
+
+func (f *queryFlags) sqlSource(cmd *cobra.Command, stdin io.Reader) (string, error) {
 	switch {
 	case f.sql != "" && f.fromFile != "":
 		return "", errs.Validation("--query and --from-file are mutually exclusive")
@@ -84,13 +97,21 @@ func isTerminal(f *os.File) bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
-func (f *queryFlags) options(cmd *cobra.Command, sql string) (targetintel.Settings, targetintel.QueryOptions) {
+// options resolves the settings and the job options the shared flags
+// describe, rejecting any that are out of range.
+func (f *queryFlags) options(cmd *cobra.Command, sql string) (targetintel.Settings, targetintel.QueryOptions, error) {
+	if f.timeout < 0 {
+		return targetintel.Settings{}, targetintel.QueryOptions{}, errs.Validation("--timeout must be 0 (no job timeout) or more, got %s", f.timeout)
+	}
 	o := targetintel.Overrides{}
 	if cmd.Flags().Changed("max-cost") {
 		v := f.maxCost
 		o.MaxCostUSD = &v
 	}
-	s := settingsFromCmd(cmd, o)
+	s, err := settingsFromCmd(cmd, o)
+	if err != nil {
+		return targetintel.Settings{}, targetintel.QueryOptions{}, err
+	}
 
 	return s, targetintel.QueryOptions{
 		SQL:         strings.TrimSpace(sql),
@@ -98,7 +119,21 @@ func (f *queryFlags) options(cmd *cobra.Command, sql string) (targetintel.Settin
 		PricePerTiB: s.PricePerTiB,
 		NoCache:     f.noCache,
 		Timeout:     f.timeout,
+	}, nil
+}
+
+// rowLimit returns the row cap for --limit, or 0 (every row) with --all.
+// Run reads a limit of 0 or less as "every row", so a non-positive --limit
+// would silently mean --all; it is rejected instead.
+func rowLimit(limit int, all bool) (int, error) {
+	if all {
+		return 0, nil
 	}
+	if limit < 1 {
+		return 0, errs.Validation("--limit must be at least 1, got %d; use --all for every row", limit)
+	}
+
+	return limit, nil
 }
 
 // estimatePayload is the JSON emitted by estimate and query --dry-run.
@@ -150,15 +185,18 @@ func queryCommand() *cobra.Command {
 		Short:   i18n.C.TargetIntelQueryShort,
 		Long:    i18n.C.TargetIntelQueryLong,
 		Example: i18n.C.TargetIntelQueryExample,
-		Args:    cobra.NoArgs,
+		Args:    validArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sql, err := f.readSQL(cmd, os.Stdin)
 			if err != nil {
 				return err
 			}
-			s, opts := f.options(cmd, sql)
-			if !all {
-				opts.Limit = limit
+			s, opts, err := f.options(cmd, sql)
+			if err != nil {
+				return err
+			}
+			if opts.Limit, err = rowLimit(limit, all); err != nil {
+				return err
 			}
 
 			c, err := targetintel.NewClient(cmd.Context(), s)
@@ -258,13 +296,16 @@ func estimateCommand() *cobra.Command {
 		Use:   "estimate [--query <sql> | --from-file <path>]",
 		Short: i18n.C.TargetIntelEstimateShort,
 		Long:  i18n.C.TargetIntelEstimateLong,
-		Args:  cobra.NoArgs,
+		Args:  validArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sql, err := f.readSQL(cmd, os.Stdin)
 			if err != nil {
 				return err
 			}
-			s, opts := f.options(cmd, sql)
+			s, opts, err := f.options(cmd, sql)
+			if err != nil {
+				return err
+			}
 			c, err := targetintel.NewClient(cmd.Context(), s)
 			if err != nil {
 				return err

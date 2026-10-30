@@ -44,14 +44,17 @@ func hostCommand() *cobra.Command {
 		Short:   i18n.C.TargetIntelHostShort,
 		Long:    i18n.C.TargetIntelHostLong,
 		Example: i18n.C.TargetIntelHostExample,
-		Args:    cobra.ExactArgs(1),
+		Args:    validArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q, err := targetintel.ParseHostTarget(args[0])
 			if err != nil {
 				return err
 			}
 			q.LookbackDays = days
-			s, base := f.options(cmd, "")
+			s, base, err := f.options(cmd, "")
+			if err != nil {
+				return err
+			}
 
 			if q.CIDR != "" {
 				opts := base
@@ -59,8 +62,8 @@ func hostCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if !all {
-					opts.Limit = limit
+				if opts.Limit, err = rowLimit(limit, all); err != nil {
+					return err
 				}
 				c, err := targetintel.NewClient(cmd.Context(), s)
 				if err != nil {

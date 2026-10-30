@@ -15,6 +15,8 @@ func authCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth <command>",
 		Short: i18n.C.TargetIntelAuthShort,
+		Args:  validArgs(cobra.NoArgs),
+		RunE:  groupRunE,
 	}
 	cmd.AddCommand(loginCommand(), logoutCommand(), statusCommand())
 
@@ -36,7 +38,7 @@ func loginCommand() *cobra.Command {
 		Use:   "login",
 		Short: i18n.C.TargetIntelAuthLoginShort,
 		Long:  i18n.C.TargetIntelAuthLoginLong,
-		Args:  cobra.NoArgs,
+		Args:  validArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r := output.FromCmd(cmd)
 
@@ -49,6 +51,11 @@ func loginCommand() *cobra.Command {
 			}
 			if !r.Interactive() && !noBrowser {
 				return errs.Validation("%s", i18n.C.TargetIntelAuthLoginErrorCI)
+			}
+			// Resolved before the browser flow so a bad --project fails first.
+			s, err := settingsFromCmd(cmd, targetintel.Overrides{})
+			if err != nil {
+				return err
 			}
 
 			opts := targetintel.LoginOptions{
@@ -65,7 +72,6 @@ func loginCommand() *cobra.Command {
 			// Save the project so later invocations need no flag. An
 			// explicit --project wins; otherwise keep whatever is already
 			// stored and fall back to the default.
-			s := settingsFromCmd(cmd, targetintel.Overrides{})
 			if err := config.SetTargetIntel(config.TargetIntelConfig{Project: s.Project, Location: s.Location}); err != nil {
 				return err
 			}
@@ -96,7 +102,7 @@ func logoutCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: i18n.C.TargetIntelAuthLogoutShort,
-		Args:  cobra.NoArgs,
+		Args:  validArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r := output.FromCmd(cmd)
 			if targetintel.CredentialsEnvSet() {
@@ -141,10 +147,10 @@ func statusCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: i18n.C.TargetIntelAuthStatusShort,
-		Args:  cobra.NoArgs,
+		Args:  validArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r := output.FromCmd(cmd)
-			s := settingsFromCmd(cmd, targetintel.Overrides{})
+			s, serr := settingsFromCmd(cmd, targetintel.Overrides{})
 			p := statusPayload{
 				SchemaVersion:  output.SchemaVersion,
 				Project:        s.Project,
@@ -152,6 +158,17 @@ func statusCommand() *cobra.Command {
 				Location:       s.Location,
 				LocationSource: s.LocationSource,
 				MaxCostUSD:     s.MaxCostUSD,
+			}
+			// JSON mode keeps its exit-0 contract: a bad setting is a reason,
+			// like a missing credential.
+			if serr != nil {
+				if r.IsJSON() {
+					p.Reason = serr.Error()
+
+					return r.JSON(p)
+				}
+
+				return serr
 			}
 
 			creds, err := targetintel.ResolveCredentials(cmd.Context())

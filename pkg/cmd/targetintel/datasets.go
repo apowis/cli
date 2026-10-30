@@ -13,14 +13,20 @@ func datasetsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "datasets <command>",
 		Short: i18n.C.TargetIntelDatasetsShort,
+		Args:  validArgs(cobra.NoArgs),
+		RunE:  groupRunE,
 	}
 	cmd.AddCommand(&cobra.Command{
 		Use:   "list",
 		Short: i18n.C.TargetIntelDatasetsListShort,
-		Args:  cobra.NoArgs,
+		Args:  validArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r := output.FromCmd(cmd)
-			c, err := targetintel.NewClient(cmd.Context(), settingsFromCmd(cmd, targetintel.Overrides{}))
+			s, err := settingsFromCmd(cmd, targetintel.Overrides{})
+			if err != nil {
+				return err
+			}
+			c, err := targetintel.NewClient(cmd.Context(), s)
 			if err != nil {
 				return err
 			}

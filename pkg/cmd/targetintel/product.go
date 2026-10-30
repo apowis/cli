@@ -23,10 +23,16 @@ func productCommand() *cobra.Command {
 		Short:   i18n.C.TargetIntelProductShort,
 		Long:    i18n.C.TargetIntelProductLong,
 		Example: i18n.C.TargetIntelProductExample,
-		Args:    cobra.NoArgs,
+		Args:    validArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := targetintel.ProductQuery{Vendor: vendor, Product: product, LookbackDays: days}
-			s, opts := f.options(cmd, "")
+			s, opts, err := f.options(cmd, "")
+			if err != nil {
+				return err
+			}
+			if opts.Limit, err = rowLimit(limit, all); err != nil {
+				return err
+			}
 			sql, params, err := s.ObservationsByProduct(q)
 			if err != nil {
 				return err
@@ -42,9 +48,6 @@ func productCommand() *cobra.Command {
 				textColumns = nil
 			}
 			opts.SQL, opts.Params = sql, params
-			if !all {
-				opts.Limit = limit
-			}
 
 			c, err := targetintel.NewClient(cmd.Context(), s)
 			if err != nil {

@@ -31,17 +31,30 @@ func cvesCommand() *cobra.Command {
 		Short:   i18n.C.TargetIntelCvesShort,
 		Long:    i18n.C.TargetIntelCvesLong,
 		Example: i18n.C.TargetIntelCvesExample,
-		Args:    cobra.NoArgs,
+		Args:    validArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// --days and --min-confidence only reach the routine. --counts and
+			// --top read a nightly aggregate with a fixed window, so a value
+			// set for them would be silently ignored; reject it instead.
+			routineOnly := cmd.Flags().Changed("days") || cmd.Flags().Changed("min-confidence")
 			if counts && groupBy != "" {
 				return errs.Validation("--counts and --group-by are mutually exclusive")
 			}
-			if top && (len(cves) > 0 || counts || groupBy != "") {
-				return errs.Validation("--top takes no --cves, --counts or --group-by")
+			if counts && routineOnly {
+				return errs.Validation("--counts reads a fixed 30-day window across every tier; --days and --min-confidence do not apply")
 			}
-			s, opts := f.options(cmd, "")
-			if !all {
-				opts.Limit = limit
+			if top && (len(cves) > 0 || counts || groupBy != "" || routineOnly) {
+				return errs.Validation("--top takes no --cves, --counts, --group-by, --days or --min-confidence")
+			}
+			if !top && (kev || cmd.Flags().Changed("min-epss")) {
+				return errs.Validation("--kev and --min-epss apply only with --top")
+			}
+			s, opts, err := f.options(cmd, "")
+			if err != nil {
+				return err
+			}
+			if opts.Limit, err = rowLimit(limit, all); err != nil {
+				return err
 			}
 
 			if top {

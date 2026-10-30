@@ -2,7 +2,7 @@ package targetintel
 
 import (
 	"encoding/binary"
-	"net"
+	"net/netip"
 	"strings"
 
 	"cloud.google.com/go/bigquery"
@@ -21,10 +21,14 @@ type HostQuery struct {
 }
 
 // ParseHostTarget accepts an IPv4 address or an IPv4 CIDR of /16 or
-// longer and returns the query for it. A CIDR is normalised to its
-// network address.
+// longer and returns the query for it. A CIDR with host bits set is
+// normalised to its network address rather than rejected, so pasting an
+// interface address such as 10.1.2.3/24 asks for the block it sits in.
 func ParseHostTarget(s string) (HostQuery, error) {
 	s = strings.TrimSpace(s)
+	if s == "" {
+		return HostQuery{}, errs.Validation("an IPv4 address or CIDR range is required")
+	}
 	if !strings.Contains(s, "/") {
 		ip, err := ParseHostIP(s)
 		if err != nil {
@@ -33,51 +37,77 @@ func ParseHostTarget(s string) (HostQuery, error) {
 
 		return HostQuery{IP: ip}, nil
 	}
-	_, ipnet, err := net.ParseCIDR(s)
+	p, err := parseHostPrefix(s)
 	if err != nil {
-		return HostQuery{}, errs.Validation("%q is not a CIDR range", s)
-	}
-	if ipnet.IP.To4() == nil {
-		return HostQuery{}, errs.Validation("%s is IPv6; host lookups support IPv4 only", s)
-	}
-	ones, _ := ipnet.Mask.Size()
-	if ones < MaxHostPrefix {
-		return HostQuery{}, errs.Validation("%s is wider than /%d; narrow the range", s, MaxHostPrefix)
+		return HostQuery{}, err
 	}
 
-	return HostQuery{CIDR: ipnet.String()}, nil
+	return HostQuery{CIDR: p.String()}, nil
 }
 
-// cidrBounds returns the first and last ip_int of an IPv4 CIDR.
-func cidrBounds(cidr string) (int64, int64, error) {
-	_, ipnet, err := net.ParseCIDR(cidr)
+// parseHostPrefix parses an IPv4 CIDR of /MaxHostPrefix or longer and
+// returns it masked to its network address. An IPv4-mapped IPv6 prefix
+// (::ffff:a.b.c.d/n) is read as its IPv4 equivalent, as ParseHostIP does
+// for a single address; without that translation ::ffff:0.0.0.0/96 would
+// pass the width check while covering all of IPv4. The prefix length must
+// be plain decimal: 10.0.0.0/024 is rejected rather than guessed at.
+func parseHostPrefix(s string) (netip.Prefix, error) {
+	p, err := netip.ParsePrefix(strings.TrimSpace(s))
 	if err != nil {
-		return 0, 0, errs.Validation("%q is not a CIDR range", cidr)
+		return netip.Prefix{}, errs.Validation("%q is not a CIDR range", s)
 	}
-	v4 := ipnet.IP.To4()
-	if v4 == nil {
-		return 0, 0, errs.Validation("%s is IPv6; host lookups support IPv4 only", cidr)
+	addr, bits := p.Addr(), p.Bits()
+	switch {
+	case addr.Is4():
+	case addr.Is4In6() && bits >= 96:
+		addr, bits = addr.Unmap(), bits-96
+	default:
+		return netip.Prefix{}, errs.Validation("%s is IPv6; host lookups support IPv4 only", s)
 	}
-	lo := int64(binary.BigEndian.Uint32(v4))
-	ones, bits := ipnet.Mask.Size()
-	hi := lo + int64(1)<<uint(bits-ones) - 1
+	if bits < MaxHostPrefix {
+		return netip.Prefix{}, errs.Validation("%s is wider than /%d; narrow the range", s, MaxHostPrefix)
+	}
+
+	return netip.PrefixFrom(addr, bits).Masked(), nil
+}
+
+// cidrBounds returns the first and last ip_int of an IPv4 CIDR. It applies
+// the same checks as ParseHostTarget, so a HostQuery built by hand cannot
+// ask for a wider range than the command line accepts.
+func cidrBounds(cidr string) (int64, int64, error) {
+	p, err := parseHostPrefix(cidr)
+	if err != nil {
+		return 0, 0, err
+	}
+	v4 := p.Addr().As4()
+	lo := int64(binary.BigEndian.Uint32(v4[:]))
+	hi := lo + int64(1)<<uint(32-p.Bits()) - 1
 
 	return lo, hi, nil
 }
 
 // ParseHostIP validates and normalises the IP a host lookup takes. Only
 // IPv4 is supported: the warehouse keys hosts on ip_int, an IPv4 integer.
+// An IPv4-mapped IPv6 address is read as the IPv4 address it carries.
+// Octets with leading zeros are rejected, since 010 is octal to some tools
+// and decimal to others.
 func ParseHostIP(s string) (string, error) {
-	ip := net.ParseIP(strings.TrimSpace(s))
-	if ip == nil {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return "", errs.Validation("an IPv4 address is required")
+	}
+	ip, err := netip.ParseAddr(t)
+	if err != nil {
 		return "", errs.Validation("%q is not an IP address", s)
 	}
-	v4 := ip.To4()
-	if v4 == nil {
-		return "", errs.Validation("%s is IPv6; host lookups support IPv4 only", ip)
+	if ip.Is4In6() {
+		ip = ip.Unmap()
+	}
+	if !ip.Is4() {
+		return "", errs.Validation("%s is IPv6; host lookups support IPv4 only", t)
 	}
 
-	return v4.String(), nil
+	return ip.String(), nil
 }
 
 // HostProfileColumns are the columns HostProfile selects, in order.
@@ -94,7 +124,7 @@ func (s Settings) HostProfile(q HostQuery) (string, []bigquery.QueryParameter, e
 	if err != nil {
 		return "", nil, err
 	}
-	sql := "SELECT NET.IP_TO_STRING(h.ip) AS ip, h.last_seen, h.port_count, h.identified, h.truncated, h.protocols, h.services," +
+	sql := "SELECT NET.IP_TO_STRING(NET.IPV4_FROM_INT64(h.ip_int)) AS ip, h.last_seen, h.port_count, h.identified, h.truncated, h.protocols, h.services," +
 		" g.country, g.country_code, g.asn, g.as_name, g.as_domain" +
 		" FROM " + s.Table("host_profile") + " AS h" +
 		" LEFT JOIN " + s.Table("ipgeo_snapshot") + " AS g ON g.snapshot_hash = h.ipgeo_hash" +
@@ -151,7 +181,7 @@ func (s Settings) HostRange(q HostQuery) (string, []bigquery.QueryParameter, err
 	}
 	const label = "TRIM(CONCAT(COALESCE(vendor, ''), ' ', COALESCE(product, ''), ' ', COALESCE(version, '')))"
 	sql := "WITH h AS (" +
-		" SELECT ip_int, ip, ipgeo_hash, last_seen, port_count, services" +
+		" SELECT ip_int, ipgeo_hash, last_seen, port_count, services" +
 		" FROM " + s.Table("host_profile") +
 		" WHERE ip_int BETWEEN @lo AND @hi" +
 		"), f AS (" +
@@ -160,7 +190,7 @@ func (s Settings) HostRange(q HostQuery) (string, []bigquery.QueryParameter, err
 		" WHERE ip_int BETWEEN @lo AND @hi" +
 		" AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @lookback_days DAY)" +
 		" GROUP BY ip_int" +
-		") SELECT NET.IP_TO_STRING(h.ip) AS ip, g.country_code, g.asn, g.as_name, h.last_seen, h.port_count," +
+		") SELECT NET.IP_TO_STRING(NET.IPV4_FROM_INT64(h.ip_int)) AS ip, g.country_code, g.asn, g.as_name, h.last_seen, h.port_count," +
 		" ARRAY(SELECT CONCAT(CAST(sv.port AS STRING), '/', COALESCE(sv.transport, 'unknown'), ' ', sv.service) FROM UNNEST(h.services) AS sv) AS services," +
 		" COALESCE(f.products, []) AS products" +
 		" FROM h" +

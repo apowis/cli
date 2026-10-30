@@ -41,6 +41,13 @@ func (s Settings) ObservationsByProduct(q ProductQuery) (string, []bigquery.Quer
 	if !vendor.Valid && !product.Valid {
 		return "", nil, errs.Validation("at least one of --vendor or --product is required")
 	}
+	// A pattern of only wildcards matches every product, which is the full
+	// scan the vendor/product requirement exists to prevent.
+	for _, f := range [][2]string{{"--vendor", q.Vendor}, {"--product", q.Product}} {
+		if raw := strings.TrimSpace(f[1]); raw != "" && strings.Trim(raw, "%_") == "" {
+			return "", nil, errs.Validation("%s %q matches every product; give at least one character besides %% and _", f[0], raw)
+		}
+	}
 	sql := "SELECT * FROM " + s.ViewsRoutine("observations_by_product") + "(@vendor, @product, @lookback_days)"
 	params := []bigquery.QueryParameter{
 		{Name: "vendor", Value: vendor},

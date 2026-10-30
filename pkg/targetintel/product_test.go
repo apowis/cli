@@ -72,3 +72,39 @@ func TestCVELeaderboard(t *testing.T) {
 	_, _, err = s.CVELeaderboard(TopCVEs{MinEPSS: 1.5})
 	require.Error(t, err)
 }
+
+func TestObservationsByProductPatterns(t *testing.T) {
+	t.Parallel()
+	s := Settings{Project: "p", ViewsDataset: "v"}
+	tests := []struct {
+		q   ProductQuery
+		err string
+	}{
+		{q: ProductQuery{Vendor: "apache"}},
+		{q: ProductQuery{Product: "%net_scaler%"}},
+		{q: ProductQuery{Vendor: "a%"}},
+		{q: ProductQuery{Vendor: "  ", Product: "x"}},
+
+		{q: ProductQuery{}, err: "at least one of"},
+		{q: ProductQuery{Vendor: "  ", Product: "\t"}, err: "at least one of"},
+		{q: ProductQuery{Vendor: "%"}, err: `--vendor "%" matches every product`},
+		{q: ProductQuery{Vendor: "%%"}, err: "matches every product"},
+		{q: ProductQuery{Vendor: "_"}, err: "matches every product"},
+		{q: ProductQuery{Vendor: " %_% "}, err: "matches every product"},
+		{q: ProductQuery{Vendor: "apache", Product: "%"}, err: `--product "%" matches every product`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.q.Vendor+"|"+tt.q.Product, func(t *testing.T) {
+			t.Parallel()
+			tt.q.LookbackDays = 30
+			_, _, err := s.ObservationsByProduct(tt.q)
+			if tt.err != "" {
+				requireValidation(t, err)
+				assert.Contains(t, err.Error(), tt.err)
+
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}

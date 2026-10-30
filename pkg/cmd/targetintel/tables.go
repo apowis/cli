@@ -16,6 +16,8 @@ func tablesCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tables <command>",
 		Short: i18n.C.TargetIntelTablesShort,
+		Args:  validArgs(cobra.NoArgs),
+		RunE:  groupRunE,
 	}
 	cmd.AddCommand(tablesListCommand(), tablesDescribeCommand())
 
@@ -26,10 +28,13 @@ func tablesListCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list <dataset>",
 		Short: i18n.C.TargetIntelTablesListShort,
-		Args:  cobra.ExactArgs(1),
+		Args:  validArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r := output.FromCmd(cmd)
-			s := settingsFromCmd(cmd, targetintel.Overrides{})
+			s, err := settingsFromCmd(cmd, targetintel.Overrides{})
+			if err != nil {
+				return err
+			}
 			ref, err := targetintel.ParseRef(args[0], s.Project, false)
 			if err != nil {
 				return err
@@ -63,10 +68,13 @@ func tablesDescribeCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "describe <dataset>.<table>",
 		Short: i18n.C.TargetIntelTablesDescribeShort,
-		Args:  cobra.ExactArgs(1),
+		Args:  validArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r := output.FromCmd(cmd)
-			s := settingsFromCmd(cmd, targetintel.Overrides{})
+			s, err := settingsFromCmd(cmd, targetintel.Overrides{})
+			if err != nil {
+				return err
+			}
 			ref, err := targetintel.ParseRef(args[0], s.Project, true)
 			if err != nil {
 				return err

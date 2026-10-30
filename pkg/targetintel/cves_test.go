@@ -1,6 +1,8 @@
 package targetintel
 
 import (
+	"math"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,4 +36,70 @@ func TestObservationsByCVEs(t *testing.T) {
 	require.Error(t, err)
 	_, _, err = s.ObservationsByCVEs(CVEQuery{CVEs: []string{"CVE-2024-6387"}, MinConfidence: 20, LookbackDays: 0})
 	require.Error(t, err)
+}
+
+func TestNormalizeCVEsInputs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in   []string
+		want []string
+		err  string
+	}{
+		{in: []string{"CVE-1999-0001"}, want: []string{"CVE-1999-0001"}},
+		{in: []string{"CVE-2024-6387"}, want: []string{"CVE-2024-6387"}},
+		{in: []string{"cve-2024-6387"}, want: []string{"CVE-2024-6387"}},
+		{in: []string{"CVE-2021-1234567"}, want: []string{"CVE-2021-1234567"}},
+		{in: []string{" CVE-2024-6387 ,, CVE-2024-3400"}, want: []string{"CVE-2024-6387", "CVE-2024-3400"}},
+
+		{in: nil, err: "at least one CVE id"},
+		{in: []string{""}, err: "at least one CVE id"},
+		{in: []string{" , "}, err: "at least one CVE id"},
+		{in: []string{"CVE-24-1"}, err: "not a CVE id"},
+		{in: []string{"CVE-2024-123"}, err: "not a CVE id"},
+		{in: []string{"CVE-0000-0000"}, err: "not a CVE id"},
+		{in: []string{"CVE-1998-0001"}, err: "not a CVE id"},
+		{in: []string{"CVE-20245-0001"}, err: "not a CVE id"},
+		{in: []string{"CVE-2024-6387x"}, err: "not a CVE id"},
+		{in: []string{"CVE-2024-6387;DROP"}, err: "not a CVE id"},
+		{in: []string{"CVE_2024_6387"}, err: "not a CVE id"},
+		{in: []string{"CVE-2024-6387 CVE-2024-3400"}, err: "not a CVE id"},
+		{in: []string{"CVE-2024-١٢٣٤"}, err: "not a CVE id"},
+		{in: []string{"GHSA-xxxx-xxxx-xxxx"}, err: "not a CVE id"},
+		{in: []string{"CVE-2024-6387", "bogus"}, err: "not a CVE id"},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.in, "|"), func(t *testing.T) {
+			t.Parallel()
+			got, err := NormalizeCVEs(tt.in)
+			if tt.err != "" {
+				requireValidation(t, err)
+				assert.Contains(t, err.Error(), tt.err)
+
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestCVERangeChecks(t *testing.T) {
+	t.Parallel()
+	s := Settings{Project: "p", ViewsDataset: "v", Dataset: "d"}
+	for _, conf := range []int{-1, 0, 5, 25, 50} {
+		_, _, err := s.ObservationsByCVEs(CVEQuery{CVEs: []string{"CVE-2024-6387"}, MinConfidence: conf, LookbackDays: 30})
+		requireValidation(t, err, conf)
+	}
+	for _, days := range []int{-1, 0} {
+		_, _, err := s.ObservationsByCVEs(CVEQuery{CVEs: []string{"CVE-2024-6387"}, MinConfidence: 20, LookbackDays: days})
+		requireValidation(t, err, days)
+	}
+	for _, epss := range []float64{0, 0.5, 1} {
+		_, _, err := s.CVELeaderboard(TopCVEs{MinEPSS: epss})
+		require.NoError(t, err, epss)
+	}
+	for _, epss := range []float64{-0.1, 1.01, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		_, _, err := s.CVELeaderboard(TopCVEs{MinEPSS: epss})
+		requireValidation(t, err, epss)
+	}
 }

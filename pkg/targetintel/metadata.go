@@ -43,7 +43,8 @@ type TableRef struct {
 }
 
 // ParseRef splits a dotted reference, defaulting the project to the billing
-// project.
+// project, and checks each part against BigQuery's naming rules so a typo
+// fails here rather than as a not-found from the API.
 func ParseRef(ref, defaultProject string, wantTable bool) (TableRef, error) {
 	parts := strings.Split(strings.TrimSpace(ref), ".")
 	r := TableRef{Project: defaultProject}
@@ -63,12 +64,17 @@ func ParseRef(ref, defaultProject string, wantTable bool) (TableRef, error) {
 
 		return r, errs.Validation("expected <dataset> or <project>.<dataset>, got %q", ref)
 	}
-	for _, p := range []string{r.Project, r.Dataset, r.Table} {
-		if wantTable || p != r.Table {
-			if p == "" {
-				return r, errs.Validation("empty component in reference %q", ref)
-			}
-		}
+	if r.Project == "" || r.Dataset == "" || (wantTable && r.Table == "") {
+		return r, errs.Validation("empty component in reference %q", ref)
+	}
+	if !validProject(r.Project) {
+		return r, errs.Validation("%q in %q is not a valid GCP project id", r.Project, ref)
+	}
+	if !validDataset(r.Dataset) {
+		return r, errs.Validation("%q in %q is not a valid dataset name (letters, digits and underscores)", r.Dataset, ref)
+	}
+	if wantTable && !validTable(r.Table) {
+		return r, errs.Validation("%q in %q is not a valid table name", r.Table, ref)
 	}
 
 	return r, nil

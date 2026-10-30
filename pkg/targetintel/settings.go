@@ -5,10 +5,13 @@
 package targetintel
 
 import (
+	"math"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/vulncheck-oss/cli/internal/errs"
 	"github.com/vulncheck-oss/cli/pkg/config"
 )
 
@@ -93,7 +96,9 @@ func ResolveSettings(o Overrides) Settings {
 	case o.MaxCostUSD != nil:
 		s.MaxCostUSD = *o.MaxCostUSD
 	case os.Getenv(EnvMaxCost) != "":
-		if v, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(EnvMaxCost)), 64); err == nil {
+		// Garbage, NaN or Inf falls back to the default cap; a negative
+		// number is kept so Validate can reject it rather than run uncapped.
+		if v, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(EnvMaxCost)), 64); err == nil && finite(v) {
 			s.MaxCostUSD = v
 		}
 	}
@@ -102,13 +107,15 @@ func ResolveSettings(o Overrides) Settings {
 	case o.PricePerTiB != nil:
 		s.PricePerTiB = *o.PricePerTiB
 	case os.Getenv(EnvPricePerTiB) != "":
-		if v, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(EnvPricePerTiB)), 64); err == nil && v > 0 {
+		if v, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(EnvPricePerTiB)), 64); err == nil && v > 0 && finite(v) {
 			s.PricePerTiB = v
 		}
 	}
 
 	return s
 }
+
+func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 
 func pick(flag, env, stored, def string) (string, string) {
 	switch {
@@ -121,4 +128,63 @@ func pick(flag, env, stored, def string) (string, string) {
 	default:
 		return def, "default"
 	}
+}
+
+var (
+	// projectID admits the characters of a Google project id (lowercase
+	// letters, digits and hyphens, starting with a letter and not ending
+	// with a hyphen), with the optional "domain:" prefix of a domain-scoped
+	// project. Length is left to Google.
+	projectID = regexp.MustCompile(`^(?:[a-z0-9][a-z0-9.-]*:)?[a-z](?:[a-z0-9-]*[a-z0-9])?$`)
+	// datasetID is BigQuery's dataset naming rule.
+	datasetID = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+	// tableID is BigQuery's table naming rule: letters, marks, numbers,
+	// connectors (including _), dashes and spaces.
+	tableID = regexp.MustCompile(`^[\p{L}\p{M}\p{N}\p{Pc}\p{Pd}\p{Zs}]+$`)
+	// locationName admits multi-regions (US, EU) and regions
+	// (europe-west1). An unknown but well-formed location is left to
+	// BigQuery to reject.
+	locationName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]{1,63}$`)
+)
+
+// maxNameBytes is BigQuery's limit on a dataset or table name.
+const maxNameBytes = 1024
+
+func validProject(s string) bool { return projectID.MatchString(s) }
+
+func validDataset(s string) bool { return len(s) <= maxNameBytes && datasetID.MatchString(s) }
+
+func validTable(s string) bool { return len(s) <= maxNameBytes && tableID.MatchString(s) }
+
+// Validate rejects settings that would otherwise reach BigQuery as a
+// malformed name or an unusable cost cap. Every source (flag, environment,
+// config file) is checked, since all of them end up in the same SQL and
+// job configuration. The project and datasets are spliced into SQL inside
+// backticks, so this is also what keeps a stray backtick out of a query.
+func (s Settings) Validate() error {
+	if !validProject(s.Project) {
+		return errs.Validation("project %q (from %s) is not a valid GCP project id", s.Project, s.ProjectSource).
+			WithHint("set --project or %s to a project id such as %s", EnvProject, DefaultProject)
+	}
+	if !locationName.MatchString(s.Location) {
+		return errs.Validation("location %q (from %s) is not a valid BigQuery location", s.Location, s.LocationSource).
+			WithHint("set --location or %s to a location such as %s", EnvLocation, DefaultLocation)
+	}
+	if !validDataset(s.ViewsDataset) {
+		return errs.Validation("views dataset %q is not a valid dataset name (letters, digits and underscores)", s.ViewsDataset).
+			WithHint("check --views-dataset and %s", EnvViewsDataset)
+	}
+	if !validDataset(s.Dataset) {
+		return errs.Validation("dataset %q is not a valid dataset name (letters, digits and underscores)", s.Dataset).
+			WithHint("check --dataset and %s", EnvDataset)
+	}
+	if !finite(s.MaxCostUSD) || s.MaxCostUSD < 0 {
+		return errs.Validation("--max-cost must be a finite amount in USD, 0 or more (0 disables the cap); got %v", s.MaxCostUSD).
+			WithHint("check --max-cost and %s", EnvMaxCost)
+	}
+	if !finite(s.PricePerTiB) || s.PricePerTiB <= 0 {
+		return errs.Validation("%s must be a positive price in USD; got %v", EnvPricePerTiB, s.PricePerTiB)
+	}
+
+	return nil
 }

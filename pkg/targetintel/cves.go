@@ -9,7 +9,10 @@ import (
 	"github.com/vulncheck-oss/cli/internal/errs"
 )
 
-var cveID = regexp.MustCompile(`^CVE-\d{4}-\d{4,}$`)
+// cveID matches a CVE id: a year from 1999, when the first ids were
+// assigned, and a sequence number of at least four digits. \d is ASCII-only
+// in RE2, so no other script's digits slip through.
+var cveID = regexp.MustCompile(`^CVE-(?:1999|2\d{3})-\d{4,}$`)
 
 // CVEQuery describes a call to the observations_by_cves_scored routine.
 type CVEQuery struct {
@@ -29,7 +32,7 @@ func NormalizeCVEs(in []string) ([]string, error) {
 				continue
 			}
 			if !cveID.MatchString(id) {
-				return nil, errs.Validation("%q is not a CVE id (expected CVE-YYYY-NNNN)", part)
+				return nil, errs.Validation("%q is not a CVE id (expected CVE-YYYY-NNNN, year 1999 or later)", part)
 			}
 			if !seen[id] {
 				seen[id] = true
@@ -99,7 +102,9 @@ type TopCVEs struct {
 // optionally limited to VulnCheck KEV entries and to an EPSS floor. CVEs
 // with only tier-10 hosts are left out, since their hosts column is zero.
 func (s Settings) CVELeaderboard(t TopCVEs) (string, []bigquery.QueryParameter, error) {
-	if t.MinEPSS < 0 || t.MinEPSS > 1 {
+	// Written as a negated range so NaN, which fails every comparison, is
+	// rejected too.
+	if !(t.MinEPSS >= 0 && t.MinEPSS <= 1) {
 		return "", nil, errs.Validation("--min-epss must be between 0 and 1")
 	}
 	sql := "SELECT " + strings.Join(CVEHostCountsColumns, ", ") +
