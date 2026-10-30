@@ -935,3 +935,109 @@ func TestE2ETables(t *testing.T) {
 		assert.Contains(t, err.Error(), "nope")
 	})
 }
+
+var httpConfigSchema = []bqfake.Field{
+	{Name: "snapshot_hash", Type: "STRING"},
+	{Name: "title", Type: "STRING"},
+	{Name: "server", Type: "STRING"},
+	{Name: "status_code", Type: "INTEGER"},
+	{Name: "content_length", Type: "INTEGER"},
+	{Name: "favicon_shodan_hash", Type: "INTEGER"},
+	{Name: "body_sha_256", Type: "STRING"},
+	{Name: "first_seen", Type: "TIMESTAMP"},
+	{Name: "last_seen", Type: "TIMESTAMP"},
+}
+
+func httpConfigRows() []bqfake.Row {
+	first, last := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+
+	return []bqfake.Row{
+		{"snapshot_hash": strings.Repeat("a", 64), "title": "FortiGate", "server": "xxxxxxxx-xxxxx", "status_code": 200, "content_length": 1024,
+			"favicon_shodan_hash": 945408572, "body_sha_256": strings.Repeat("b", 64), "first_seen": first, "last_seen": last},
+		{"snapshot_hash": strings.Repeat("c", 64), "title": "FortiGate - Login", "server": nil, "status_code": 200, "content_length": nil,
+			"favicon_shodan_hash": nil, "body_sha_256": strings.Repeat("d", 64), "first_seen": first, "last_seen": first},
+	}
+}
+
+func TestE2EServiceHTTP(t *testing.T) {
+	t.Run("json", func(t *testing.T) {
+		s := fakeBQ(t)
+		s.SetQuery(bqfake.Query{Schema: httpConfigSchema, Rows: httpConfigRows(), Stats: bqfake.Stats{TotalBytesBilled: 10 << 30}})
+
+		stdout, _, err := runTI(t, output.ModeJSON, "service", "http", "--title", "fortigate", "--status", "200", "--favicon", "945408572", "--days", "7")
+		require.NoError(t, err)
+
+		got := decodeOne(t, stdout)
+		assert.Equal(t, e2eProject+"."+targetintel.DefaultDataset+".http_snapshot", got["table"])
+		assert.Equal(t, map[string]any{
+			"protocol": "http", "title": "%fortigate%", "status": float64(200), "favicon": float64(945408572), "lookback_days": float64(7),
+		}, got["query"])
+		assert.Len(t, got["rows"], 2)
+		assert.InDelta(t, 2, got["total_rows"], 0)
+		assert.Equal(t, false, got["truncated"])
+		first := got["rows"].([]any)[0].(map[string]any)
+		assert.Equal(t, strings.Repeat("b", 64), first["body_sha_256"], "--json carries every column")
+
+		job := s.LastJob()
+		sql := jobSQL(job)
+		assert.Contains(t, sql, "FROM `"+e2eProject+"."+targetintel.DefaultDataset+".http_snapshot`")
+		assert.Contains(t, sql, "LOWER(title) LIKE LOWER(@title) AND status_code = @status AND favicon_shodan_hash = @favicon")
+		assert.True(t, strings.HasSuffix(sql, "ORDER BY last_seen DESC, snapshot_hash LIMIT @limit"), sql)
+		assert.Equal(t, map[string]any{"lookback_days": "7", "title": "%fortigate%", "status": "200", "favicon": "945408572", "limit": "100"}, jobParams(job))
+		assert.False(t, job.Configuration.DryRun)
+	})
+
+	t.Run("text", func(t *testing.T) {
+		s := fakeBQ(t)
+		s.SetQuery(bqfake.Query{Schema: httpConfigSchema, Rows: httpConfigRows(), Stats: bqfake.Stats{TotalBytesBilled: 10 << 30}})
+
+		stdout, stderr, err := runTI(t, output.ModeText, "service", "http", "--server", "xxxx", "--limit", "2")
+		require.NoError(t, err)
+		assert.Contains(t, stdout, strings.TrimSuffix(billedLine(10<<30, 1, 2, 2, false), ", 2 of 2 rows")+
+			", 2 configurations (limit reached; narrow the filters or raise --limit for more)")
+		assert.Contains(t, stdout, "FortiGate - Login")
+		assert.Contains(t, stdout, "NULL")
+		assert.NotContains(t, stdout, strings.Repeat("b", 64), "text mode leaves out body_sha_256")
+		assert.NotContains(t, stdout, "first_seen")
+		assert.Contains(t, stdout, "Showing 7 of 9 columns")
+		assert.Empty(t, stderr)
+		assert.Equal(t, "2", jobParams(s.LastJob())["limit"])
+	})
+
+	t.Run("all", func(t *testing.T) {
+		s := fakeBQ(t)
+		s.SetQuery(bqfake.Query{Schema: httpConfigSchema, Rows: httpConfigRows()})
+
+		stdout, _, err := runTI(t, output.ModeText, "service", "http", "--hash", strings.Repeat("A", 64), "--all")
+		require.NoError(t, err)
+		assert.Contains(t, stdout, ", 2 configurations\n")
+		job := s.LastJob()
+		assert.NotContains(t, jobSQL(job), "LIMIT")
+		assert.Equal(t, map[string]any{"lookback_days": "30", "hash": strings.Repeat("a", 64)}, jobParams(job))
+	})
+
+	t.Run("no match", func(t *testing.T) {
+		s := fakeBQ(t)
+		s.SetQuery(bqfake.Query{Schema: httpConfigSchema})
+
+		stdout, stderr, err := runTI(t, output.ModeText, "service", "http", "--title", "nothing", "--days", "1")
+		require.NoError(t, err)
+		assert.Contains(t, stdout, ", 0 configurations")
+		assert.Contains(t, stderr, "No http configuration matched in the last 1 day.")
+		assert.NotContains(t, stdout, "snapshot_hash", "no table for an empty result")
+	})
+
+	t.Run("dry run", func(t *testing.T) {
+		s := fakeBQ(t)
+		s.SetQuery(bqfake.Query{Stats: bqfake.Stats{TotalBytesProcessed: 49 << 30}})
+
+		stdout, _, err := runTI(t, output.ModeJSON, "service", "http", "--title", "fortigate", "--dry-run")
+		require.NoError(t, err)
+		got := decodeOne(t, stdout)
+		assert.Equal(t, true, got["within_limit"])
+		assert.InDelta(t, 49<<30, got["estimate"].(map[string]any)["bytes_processed"], 0)
+		jobs := s.Jobs()
+		require.Len(t, jobs, 1, "only the dry run is sent")
+		assert.True(t, jobs[0].Configuration.DryRun)
+	})
+}

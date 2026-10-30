@@ -114,6 +114,11 @@ type Copy struct {
 	TargetIntelHostShort           string
 	TargetIntelHostLong            string
 	TargetIntelHostExample         string
+	TargetIntelServiceShort        string
+	TargetIntelServiceLong         string
+	TargetIntelServiceHTTPShort    string
+	TargetIntelServiceHTTPLong     string
+	TargetIntelServiceHTTPExample  string
 
 	BackupShort            string
 	BackupLong             string
@@ -324,6 +329,7 @@ var En = Copy{
 		$ vulncheck target-intel cves --top --kev
 		$ vulncheck target-intel product --product netscaler --group-by version
 		$ vulncheck target-intel host 1.2.3.4
+		$ vulncheck target-intel service http --title fortigate
 		$ vulncheck target-intel estimate --from-file big-join.sql
 		$ vulncheck target-intel query --limit 10 --query "SELECT ip, port FROM anchorbreaker_prod.timeline WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 DAY) LIMIT 10"
 	`),
@@ -461,6 +467,44 @@ var En = Copy{
 		$ vulncheck ti host 81.82.248.0/24
 		$ vulncheck ti host 81.82.0.0/16 --all --json > hosts.json
 		$ vulncheck ti host 112.173.82.65 --dry-run
+	`),
+	TargetIntelServiceShort: "Distinct service configurations (HTTP responses, ...) matching a filter",
+	TargetIntelServiceLong: heredoc.Doc(`
+		Lists the distinct configurations a protocol's scans have seen, read
+		from that protocol's snapshot table: one row per distinct response,
+		so a list to narrow down from rather than a list of hosts. Each
+		protocol is a subcommand; http is the first. A lookup of the hosts
+		serving a configuration is coming.
+	`),
+	TargetIntelServiceHTTPShort: "Distinct HTTP responses matching a title, server, favicon or hash",
+	TargetIntelServiceHTTPLong: heredoc.Doc(`
+		Reads http_snapshot, one row per distinct HTTP response, for the
+		configurations last seen within --days (default 30, at most 365) that
+		match every filter given. At least one of --title, --server,
+		--favicon, --body-hash or --hash is required; --status only narrows
+		alongside one of them.
+
+		--title and --server are case-insensitive substring matches unless
+		you pass an explicit LIKE pattern with %. --favicon picks its column
+		by shape: a decimal integer is the Shodan (mmh3) hash, 32 hex
+		characters MD5, 64 hex characters SHA-256.
+
+		The response body and headers are never read, which is what keeps
+		this cheap: a 30-day search dry-runs at about 49 GiB ($0.30)
+		whatever the filters, and a --hash lookup bills far less, since the
+		table is clustered on it. --max-cost applies exactly as for "query".
+
+		Rows come back newest last_seen first. --limit (default 100) is a
+		LIMIT in the SQL, so BigQuery never sorts an unbounded set; total_rows
+		is therefore the rows returned, not the rows matched, and truncated is
+		always false. Text mode leaves out body_sha_256 and first_seen;
+		--json returns every column plus table and the echoed query.
+	`),
+	TargetIntelServiceHTTPExample: heredoc.Doc(`
+		$ vulncheck ti service http --title "fortigate"
+		$ vulncheck ti service http --server "mini_httpd" --status 200 --days 7
+		$ vulncheck ti service http --favicon -1132923558 --json
+		$ vulncheck ti service http --title "Index of /%" --dry-run
 	`),
 
 	NvdShort:            "Query the NVD API 2.0 compatible endpoints (api /rest/json)",

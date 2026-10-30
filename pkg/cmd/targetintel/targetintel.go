@@ -49,6 +49,7 @@ func Command() *cobra.Command {
 	cmd.AddCommand(cvesCommand())
 	cmd.AddCommand(productCommand())
 	cmd.AddCommand(hostCommand())
+	cmd.AddCommand(serviceCommand())
 
 	return cmd
 }

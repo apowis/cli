@@ -49,6 +49,8 @@ func TestInvalidInputExitsValidation(t *testing.T) {
 		{"cves", "--cves", "CVE-2024-6387", "--counts", "--dry-run"},
 		{"cves", "--top", "--limit", "10", "--dry-run"},
 		{"product", "--vendor", "apache", "--dry-run"},
+		{"service", "http", "--title", "login", "--status", "200", "--dry-run"},
+		{"service", "http", "--favicon", "-1132923558", "--days", "365", "--dry-run"},
 	} {
 		err := run(args...)
 		require.Error(t, err, args)
@@ -127,6 +129,25 @@ func TestInvalidInputExitsValidation(t *testing.T) {
 		{"product", "--vendor", "apache", "--days", "0"},
 		{"product", "--vendor", "apache", "--group-by", "nope"},
 		{"product", "--vendor", "apache", "--limit", "0"},
+
+		// service
+		{"service", "bogus"},
+		{"service", "http", "extra"},
+		{"service", "http"},
+		{"service", "http", "--status", "200"},
+		{"service", "http", "--title", "%"},
+		{"service", "http", "--server", "%_%"},
+		{"service", "http", "--title", "x", "--status", "99"},
+		{"service", "http", "--title", "x", "--status", "abc"},
+		{"service", "http", "--favicon", "0xdeadbeef"},
+		{"service", "http", "--favicon", "abc123"},
+		{"service", "http", "--hash", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		{"service", "http", "--hash", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"},
+		{"service", "http", "--body-hash", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0"},
+		{"service", "http", "--title", "x", "--days", "0"},
+		{"service", "http", "--title", "x", "--days", "366"},
+		{"service", "http", "--title", "x", "--limit", "0"},
+		{"service", "http", "--title", "x", "--days", "abc"},
 
 		// query and estimate
 		{"query"},
