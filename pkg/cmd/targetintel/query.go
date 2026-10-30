@@ -1,6 +1,7 @@
 package targetintel
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"strings"
@@ -27,6 +28,11 @@ type queryFlags struct {
 func (f *queryFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&f.sql, "query", "q", "", "SQL to run")
 	cmd.Flags().StringVar(&f.fromFile, "from-file", "", `Read SQL from a file ("-" for stdin)`)
+	f.bindCommon(cmd)
+}
+
+// bindCommon binds the flags every query-running command shares.
+func (f *queryFlags) bindCommon(cmd *cobra.Command) {
 	cmd.Flags().Float64Var(&f.maxCost, "max-cost", targetintel.DefaultMaxCostUSD,
 		"Max estimated cost in USD before the query is refused (env: "+targetintel.EnvMaxCost+"; 0 disables the limit)")
 	cmd.Flags().BoolVar(&f.noCache, "no-cache", false, "Disable the BigQuery result cache")
@@ -107,6 +113,31 @@ type estimatePayload struct {
 type resultPayload struct {
 	SchemaVersion int `json:"schema_version"`
 	*targetintel.Result
+	// Extra carries command-specific fields (the routine and its arguments)
+	// alongside the generic result.
+	Extra map[string]any `json:"-"`
+}
+
+// MarshalJSON flattens Extra into the top-level object.
+func (p resultPayload) MarshalJSON() ([]byte, error) {
+	type plain resultPayload
+	b, err := json.Marshal(plain(p))
+	if err != nil || len(p.Extra) == 0 {
+		return b, err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	for k, v := range p.Extra {
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		m[k] = raw
+	}
+
+	return json.Marshal(m)
 }
 
 func queryCommand() *cobra.Command {
@@ -121,7 +152,6 @@ func queryCommand() *cobra.Command {
 		Example: i18n.C.TargetIntelQueryExample,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			r := output.FromCmd(cmd)
 			sql, err := f.readSQL(cmd, os.Stdin)
 			if err != nil {
 				return err
@@ -141,34 +171,7 @@ func queryCommand() *cobra.Command {
 				return renderEstimate(cmd, c, opts)
 			}
 
-			res, err := c.Run(cmd.Context(), opts)
-			if err != nil {
-				return err
-			}
-
-			if r.IsJSON() {
-				return r.JSON(resultPayload{SchemaVersion: output.SchemaVersion, Result: res})
-			}
-
-			r.Info("Estimated %s (%s), billed %s, %d of %d rows%s",
-				targetintel.FormatCost(res.Estimate.CostUSD), targetintel.FormatBytes(res.Estimate.BytesProcessed),
-				targetintel.FormatCost(res.CostUSD), res.ReturnedRows, res.TotalRows, truncatedNote(res))
-
-			headers := make([]string, 0, len(res.Schema))
-			for _, col := range res.Schema {
-				headers = append(headers, col.Name)
-			}
-			rows := make([][]string, 0, len(res.Rows))
-			for _, row := range res.Rows {
-				cells := make([]string, 0, len(headers))
-				for _, h := range headers {
-					cells = append(cells, targetintel.CellString(row[h]))
-				}
-				rows = append(rows, cells)
-			}
-			r.Println(ui.Table(headers, rows))
-
-			return nil
+			return runAndRender(cmd, c, opts, nil, nil)
 		},
 	}
 	f.bind(cmd)
@@ -177,6 +180,47 @@ func queryCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the estimate and exit without running the query")
 
 	return cmd
+}
+
+// runAndRender runs the query and renders the result. In JSON mode the
+// payload is the full Result plus any extra top-level fields; in text mode
+// the table shows textColumns when given, otherwise every column.
+func runAndRender(cmd *cobra.Command, c *targetintel.Client, opts targetintel.QueryOptions, extra map[string]any, textColumns []string) error {
+	r := output.FromCmd(cmd)
+	res, err := c.Run(cmd.Context(), opts)
+	if err != nil {
+		return err
+	}
+
+	if r.IsJSON() {
+		return r.JSON(resultPayload{SchemaVersion: output.SchemaVersion, Extra: extra, Result: res})
+	}
+
+	r.Info("Estimated %s (%s), billed %s, %d of %d rows%s",
+		targetintel.FormatCost(res.Estimate.CostUSD), targetintel.FormatBytes(res.Estimate.BytesProcessed),
+		targetintel.FormatCost(res.CostUSD), res.ReturnedRows, res.TotalRows, truncatedNote(res))
+
+	headers := textColumns
+	if headers == nil {
+		headers = make([]string, 0, len(res.Schema))
+		for _, col := range res.Schema {
+			headers = append(headers, col.Name)
+		}
+	}
+	rows := make([][]string, 0, len(res.Rows))
+	for _, row := range res.Rows {
+		cells := make([]string, 0, len(headers))
+		for _, h := range headers {
+			cells = append(cells, targetintel.CellString(row[h]))
+		}
+		rows = append(rows, cells)
+	}
+	r.Println(ui.Table(headers, rows))
+	if textColumns != nil {
+		r.Info("Showing %d of %d columns; use --json for every field", len(textColumns), len(res.Schema))
+	}
+
+	return nil
 }
 
 func truncatedNote(res *targetintel.Result) string {

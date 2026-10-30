@@ -23,6 +23,7 @@ func Command() *cobra.Command {
 			$ vulncheck target-intel auth login
 			$ vulncheck target-intel datasets list
 			$ vulncheck target-intel tables describe anchorbreaker_views_prod.timeline
+			$ vulncheck target-intel cves --cves CVE-2024-6387 --days 30
 			$ vulncheck target-intel query --limit 10 --query "SELECT ip, port FROM anchorbreaker_views_prod.timeline WHERE ..."
 		`),
 	}
@@ -33,12 +34,14 @@ func Command() *cobra.Command {
 
 	cmd.PersistentFlags().String("project", "", "GCP billing project (env: "+targetintel.EnvProject+")")
 	cmd.PersistentFlags().String("location", "", "BigQuery location (env: "+targetintel.EnvLocation+", default "+targetintel.DefaultLocation+")")
+	cmd.PersistentFlags().String("views-dataset", "", "Dataset holding the observations_by_* routines (env: "+targetintel.EnvViewsDataset+", default "+targetintel.DefaultViewsDataset+")")
 
 	cmd.AddCommand(authCommand())
 	cmd.AddCommand(datasetsCommand())
 	cmd.AddCommand(tablesCommand())
 	cmd.AddCommand(queryCommand())
 	cmd.AddCommand(estimateCommand())
+	cmd.AddCommand(cvesCommand())
 
 	return cmd
 }
@@ -51,6 +54,9 @@ func settingsFromCmd(cmd *cobra.Command, o targetintel.Overrides) targetintel.Se
 	}
 	if v, _ := cmd.Flags().GetString("location"); v != "" {
 		o.Location = v
+	}
+	if v, _ := cmd.Flags().GetString("views-dataset"); v != "" {
+		o.ViewsDataset = v
 	}
 
 	return targetintel.ResolveSettings(o)

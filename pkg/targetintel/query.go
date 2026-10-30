@@ -19,6 +19,8 @@ const minMaxBytesBilled = 10 << 20
 // QueryOptions describes one query invocation.
 type QueryOptions struct {
 	SQL string
+	// Params are named query parameters referenced as @name in SQL.
+	Params []bigquery.QueryParameter
 	// MaxCostUSD refuses the query when the estimate is above it. Zero
 	// disables the limit.
 	MaxCostUSD  float64
@@ -61,6 +63,7 @@ type Result struct {
 func (c *Client) newQuery(opts QueryOptions) *bigquery.Query {
 	q := c.BQ.Query(opts.SQL)
 	q.Location = c.Settings.Location
+	q.Parameters = opts.Params
 	q.DisableQueryCache = opts.NoCache
 	q.JobTimeout = opts.Timeout
 	q.Labels = map[string]string{"client": "vulncheck-cli"}

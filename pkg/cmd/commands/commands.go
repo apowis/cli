@@ -55,7 +55,7 @@ type commandInfo struct {
 type flagInfo struct {
 	Name       string `json:"name"`
 	Shorthand  string `json:"shorthand,omitempty"`
-	Type       string `json:"type"`             // "bool", "string", "int", "stringSlice", etc.
+	Type       string `json:"type"` // "bool", "string", "int", "stringSlice", etc.
 	Default    string `json:"default,omitempty"`
 	Usage      string `json:"usage,omitempty"`
 	Deprecated string `json:"deprecated,omitempty"`

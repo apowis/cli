@@ -104,6 +104,9 @@ type Copy struct {
 	TargetIntelQueryExample        string
 	TargetIntelEstimateShort       string
 	TargetIntelEstimateLong        string
+	TargetIntelCvesShort           string
+	TargetIntelCvesLong            string
+	TargetIntelCvesExample         string
 
 	BackupShort            string
 	BackupLong             string
@@ -336,6 +339,27 @@ var En = Copy{
 	`),
 	TargetIntelEstimateShort: "Estimate a query's cost without running it (free)",
 	TargetIntelEstimateLong:  "Dry-runs the SQL and reports bytes scanned and estimated on-demand cost. Nothing is billed.",
+	TargetIntelCvesShort:     "Hosts observed vulnerable to one or more CVEs (observations_by_cves_scored)",
+	TargetIntelCvesLong: heredoc.Doc(`
+		Calls the observations_by_cves_scored routine: every host seen in the
+		lookback window whose fingerprint matches any of the given CVEs at or
+		above the confidence tier. Each row carries matched_cve_id, the host's
+		product, version, geolocation, ASN, EPSS and KEV fields.
+
+		Confidence tiers: 40 and 30 are confirmed, 20 is the default, 10 adds
+		product-level matches for versionless CPEs. Pass several CVEs in one
+		call: the inputs are scanned once however many are given.
+
+		The routine costs roughly the same whatever the window, so the dry run
+		and --max-cost apply exactly as for "query". Text mode shows a compact
+		column set; --json returns every column.
+	`),
+	TargetIntelCvesExample: heredoc.Doc(`
+		$ vulncheck ti cves --cves CVE-2024-6387 --days 30
+		$ vulncheck ti cves --cves CVE-2024-6387,CVE-2024-3400 --min-confidence 30 --json
+		$ vulncheck ti cves --cves CVE-2024-3400 --all --json > hosts.json
+		$ vulncheck ti cves --cves CVE-2024-6387 --dry-run
+	`),
 
 	NvdShort:            "Query the NVD API 2.0 compatible endpoints (api /rest/json)",
 	NvdCvesShort:        "Search CVEs (GET /rest/json/cves/2.0)",

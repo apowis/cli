@@ -25,8 +25,9 @@ type Config struct {
 // TargetIntelConfig is the targetintel block of vulncheck.yaml. Every field
 // is optional; an empty value falls through to the environment or default.
 type TargetIntelConfig struct {
-	Project  string `mapstructure:"project"`
-	Location string `mapstructure:"location"`
+	Project      string `mapstructure:"project"`
+	Location     string `mapstructure:"location"`
+	ViewsDataset string `mapstructure:"views_dataset"`
 }
 
 func Init() {
@@ -78,6 +79,7 @@ func saveConfig(config *Config) error {
 	v.Set("IndicesDir", config.IndicesDir)
 	v.Set("TargetIntel.project", config.TargetIntel.Project)
 	v.Set("TargetIntel.location", config.TargetIntel.Location)
+	v.Set("TargetIntel.views_dataset", config.TargetIntel.ViewsDataset)
 	return v.WriteConfigAs(fmt.Sprintf("%s/vulncheck.yaml", dir))
 }
 

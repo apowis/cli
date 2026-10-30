@@ -103,6 +103,7 @@ The CLI is designed to be safe to drive from scripts and AI agents. This section
 | `CI` / `BUILD_NUMBER` / `RUN_ID`           | Any of these set implies non-interactive mode (no prompts). |
 | `VC_TI_PROJECT`                            | GCP billing project for `target-intel` (flag `--project` wins; then this; then the `targetintel.project` saved by `target-intel auth login`; default `viewport-473910`). |
 | `VC_TI_LOCATION`                           | BigQuery location for `target-intel` (default `europe-west1`). Same precedence as the project. |
+| `VC_TI_VIEWS_DATASET`                      | Dataset holding the `observations_by_*` routines used by `target-intel cves` (default `anchorbreaker_views_prod`). Same precedence as the project. |
 | `VC_TI_CREDENTIALS`                        | Path to a Google credentials JSON file (service-account key or `authorized_user`). Takes precedence over the stored `target-intel auth login` credential and Application Default Credentials; while set, `target-intel auth login` refuses. |
 | `VC_TI_MAX_COST`                           | Default per-query cost limit in USD for `target-intel query` (flag `--max-cost` wins; built-in default `1.00`; `0` disables the limit). |
 | `VC_TI_PRICE_PER_TIB`                      | On-demand price used to turn bytes into dollars (default `6.25`). |
@@ -429,6 +430,7 @@ vulncheck target-intel tables list <dataset> [--json]
 vulncheck target-intel tables describe <dataset>.<table> [--json]
 vulncheck target-intel estimate [--query <sql> | --from-file <path>] [--max-cost <usd>] [--json]
 vulncheck target-intel query    [--query <sql> | --from-file <path>] [--limit <n>|--all] [--max-cost <usd>] [--dry-run] [--no-cache] [--timeout <d>] [--json]
+vulncheck target-intel cves     --cves <id>[,<id>...] [--days <n>] [--min-confidence <10|20|30|40>] [--limit <n>|--all] [--max-cost <usd>] [--dry-run] [--json]
 ```
 
 `auth login` runs the same browser flow as `gcloud auth login` (loopback redirect, PKCE) and stores a refresh token in `~/.config/vulncheck/target-intel-credentials.json` (mode 0600, Google `authorized_user` format). It also saves the billing project and location to `vulncheck.yaml` so later invocations need no flags. Credential precedence: `VC_TI_CREDENTIALS`, then the stored login, then Application Default Credentials. `auth status --json` always exits 0 and returns `{schema_version, authenticated, credential_source, principal, project, project_source, location, location_source, max_cost_usd, reason}`.
@@ -436,6 +438,8 @@ vulncheck target-intel query    [--query <sql> | --from-file <path>] [--limit <n
 Every `query` runs a free dry run first. If the estimated on-demand cost exceeds `--max-cost` (default $1.00) the query is **not run**, nothing is billed, and the command exits 7 with error code `cost_limit_exceeded`; the hint names the `--max-cost` value that would allow it. The same cap is sent to BigQuery as `maximumBytesBilled`, so a job can never bill past it even if the estimate is wrong. Only `SELECT` statements are allowed. `--limit` caps rows returned, not bytes scanned: put `WHERE`/`LIMIT` in the SQL to cut cost. SQL comes from `--query`, `--from-file` (`-` for stdin), or piped stdin.
 
 `query --json` returns `{schema_version, job_id, estimate: {bytes_processed, cost_usd, statement_type}, bytes_billed, cost_usd, cache_hit, total_rows, returned_rows, truncated, schema: [{name, type, mode}], rows: [{...}]}`. Timestamps are RFC 3339, `BYTES` columns are base64, `NUMERIC` values are decimal strings. `estimate --json` (and `query --dry-run --json`) returns `{schema_version, estimate, max_cost_usd, within_limit}`. `tables describe --json` returns the schema plus size, row count, partition and clustering keys and the cost of a full scan; it is free, so use it before writing SQL.
+
+`cves` wraps the `observations_by_cves_scored` routine: hosts seen in the last `--days` (default 30) whose fingerprint matches any of the CVEs at or above `--min-confidence` (default 20; 30 and 40 are confirmed, 10 adds versionless product matches). Pass every CVE in one call rather than one call each: the routine scans its inputs once however many are given, and costs about the same whatever the window. The same dry run and `--max-cost` gate apply. Text mode shows a compact column set; `--json` returns the `query` payload shape plus `routine` and the echoed `query: {cves, min_confidence, lookback_days}`, with every column the routine returns (`matched_cve_id`, `ip`, `port`, `service`, `cpe`, `vendor`, `product`, `version`, `confidence`, `vulnerable_cves`, `epss_*`, `kev_*`, `country`, `asn`, `as_name`, `backpatched`, ...). The routines live in `anchorbreaker_views_prod` by default; override with `--views-dataset` or `VC_TI_VIEWS_DATASET`.
 
 
 ### version

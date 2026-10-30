@@ -18,6 +18,8 @@ func TestResolveSettingsPrecedence(t *testing.T) {
 	assert.Equal(t, DefaultProject, s.Project)
 	assert.Equal(t, "default", s.ProjectSource)
 	assert.Equal(t, DefaultLocation, s.Location)
+	assert.Equal(t, DefaultViewsDataset, s.ViewsDataset)
+	assert.Equal(t, "`"+DefaultProject+"."+DefaultViewsDataset+".observations_by_cves`", s.ViewsRoutine("observations_by_cves"))
 	assert.Equal(t, DefaultMaxCostUSD, s.MaxCostUSD)
 	assert.Equal(t, DefaultPricePerTiB, s.PricePerTiB)
 

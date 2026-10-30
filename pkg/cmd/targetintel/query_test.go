@@ -1,6 +1,7 @@
 package targetintel
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/vulncheck-oss/cli/internal/output"
+	"github.com/vulncheck-oss/cli/pkg/targetintel"
 )
 
 func testCmd(t *testing.T, interactive bool) *cobra.Command {
@@ -74,6 +76,22 @@ func TestReadSQL(t *testing.T) {
 	})
 }
 
+func TestResultPayloadFlattensExtra(t *testing.T) {
+	t.Parallel()
+	p := resultPayload{
+		SchemaVersion: 1,
+		Result:        &targetintel.Result{JobID: "j", Rows: []map[string]any{}, Schema: []targetintel.Column{}},
+		Extra:         map[string]any{"routine": "r"},
+	}
+	b, err := json.Marshal(p)
+	require.NoError(t, err)
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(b, &m))
+	assert.Equal(t, float64(1), m["schema_version"])
+	assert.Equal(t, "j", m["job_id"])
+	assert.Equal(t, "r", m["routine"])
+}
+
 func TestCommandTree(t *testing.T) {
 	t.Parallel()
 	cmd := Command()
@@ -83,5 +101,5 @@ func TestCommandTree(t *testing.T) {
 	for _, c := range cmd.Commands() {
 		names = append(names, c.Name())
 	}
-	assert.ElementsMatch(t, []string{"auth", "datasets", "tables", "query", "estimate"}, names)
+	assert.ElementsMatch(t, []string{"auth", "datasets", "tables", "query", "estimate", "cves"}, names)
 }

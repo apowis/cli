@@ -44,8 +44,8 @@ type tokenCreateEnvelope struct {
 	// Token is populated in stdout JSON only when the caller passes
 	// --allow-token-on-stdout. Otherwise it is empty and the actual
 	// secret is written to stderr on a line of its own.
-	Token           string `json:"token,omitempty"`
-	TokenOnStderr   bool   `json:"token_on_stderr,omitempty"`
+	Token         string `json:"token,omitempty"`
+	TokenOnStderr bool   `json:"token_on_stderr,omitempty"`
 }
 
 func Create() *cobra.Command {
@@ -120,9 +120,9 @@ func Remove() *cobra.Command {
 
 func List() *cobra.Command {
 	var (
-		limit  int
-		page   int
-		fetch  bool // --all
+		limit int
+		page  int
+		fetch bool // --all
 	)
 
 	cmd := &cobra.Command{

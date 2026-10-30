@@ -128,8 +128,8 @@ func mustAddTar(t *testing.T, w *tar.Writer, name, body string) {
 	t.Helper()
 	hdr := &tar.Header{
 		Name:     name,
-		Mode:    0o755,
-		Size:    int64(len(body)),
+		Mode:     0o755,
+		Size:     int64(len(body)),
 		Typeflag: tar.TypeReg,
 	}
 	if err := w.WriteHeader(hdr); err != nil {
