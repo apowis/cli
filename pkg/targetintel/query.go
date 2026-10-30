@@ -2,6 +2,7 @@ package targetintel
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"regexp"
@@ -113,27 +114,25 @@ func (c *Client) Run(ctx context.Context, opts QueryOptions) (*Result, error) {
 	if opts.MaxCostUSD > 0 {
 		q.MaxBytesBilled = max(int64(opts.MaxCostUSD/opts.PricePerTiB*tib), minMaxBytesBilled)
 	}
+	// The job ID is chosen here rather than by the server so a job whose
+	// insert was interrupted can still be found and cancelled.
+	jobID := "vulncheck_cli_" + rand.Text()
+	q.JobIDConfig = bigquery.JobIDConfig{JobID: jobID}
 	job, err := q.Run(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			c.cancelJob(nil, jobID)
+		}
+
 		return nil, classify(costLimitFromJob(err, opts))
 	}
 
-	// A cancelled context must also cancel the job, or an abandoned query
-	// keeps running and billing.
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		select {
-		case <-ctx.Done():
-			cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = job.Cancel(cancelCtx)
-		case <-done:
-		}
-	}()
-
 	status, err := job.Wait(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			c.cancelJob(job, jobID)
+		}
+
 		return nil, classify(costLimitFromJob(err, opts))
 	}
 	if err := status.Err(); err != nil {
@@ -178,6 +177,29 @@ func (c *Client) Run(ctx context.Context, opts QueryOptions) (*Result, error) {
 	res.Truncated = uint64(res.ReturnedRows) < res.TotalRows
 
 	return res, nil
+}
+
+// cancelJobTimeout bounds the cancel request sent after the caller's context
+// is gone, so an unreachable API cannot hang the exit.
+const cancelJobTimeout = 5 * time.Second
+
+// cancelJob stops a job abandoned by a cancelled context, or it keeps running
+// and billing. It blocks until the request completes: the CLI exits as soon
+// as Run returns, which would kill a request left in a goroutine. A nil job
+// means the insert was interrupted, so the job is looked up by ID; one that
+// never reached the server is simply not found. Errors are dropped because
+// the caller is already returning the cancellation.
+func (c *Client) cancelJob(job *bigquery.Job, jobID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), cancelJobTimeout)
+	defer cancel()
+	if job == nil {
+		var err error
+		job, err = c.BQ.JobFromIDLocation(ctx, jobID, c.Settings.Location)
+		if err != nil {
+			return
+		}
+	}
+	_ = job.Cancel(ctx)
 }
 
 func cost(bytes int64, pricePerTiB float64) float64 {
