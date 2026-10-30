@@ -96,7 +96,7 @@ var Protocols = map[string]Protocol{
 				Usage:   "Favicon hash: a Shodan (mmh3) integer, an MD5 (32 hex) or a SHA-256 (64 hex)"},
 			{Flag: "body-hash", Column: "body_sha_256", Kind: FilterHex, HexLen: 64, Narrows: true, Arg: "<sha256>",
 				Usage: "SHA-256 of the response body (64 hex)"},
-			{Flag: "hash", Column: "snapshot_hash", Kind: FilterHex, HexLen: 64, Narrows: true, Arg: "<snapshot_hash>",
+			{Flag: "snapshot-hash", Column: "snapshot_hash", Kind: FilterHex, HexLen: 64, Narrows: true, Arg: "<hash>",
 				Usage: "Configuration hash (64 hex), as returned in snapshot_hash"},
 		},
 		Columns: []string{

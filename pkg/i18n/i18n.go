@@ -481,8 +481,8 @@ var En = Copy{
 		Reads http_snapshot, one row per distinct HTTP response, for the
 		configurations last seen within --days (default 30, at most 365) that
 		match every filter given. At least one of --title, --server,
-		--favicon, --body-hash or --hash is required; --status only narrows
-		alongside one of them.
+		--favicon, --body-hash or --snapshot-hash is required; --status only
+		narrows alongside one of them.
 
 		--title and --server are case-insensitive substring matches unless
 		you pass an explicit LIKE pattern with %. --favicon picks its column
@@ -491,8 +491,9 @@ var En = Copy{
 
 		The response body and headers are never read, which is what keeps
 		this cheap: a 30-day search dry-runs at about 49 GiB ($0.30)
-		whatever the filters, and a --hash lookup bills far less, since the
-		table is clustered on it. --max-cost applies exactly as for "query".
+		whatever the filters, and a --snapshot-hash lookup bills far less,
+		since the table is clustered on it. --max-cost applies exactly as for
+		"query".
 
 		Rows come back newest last_seen first. --limit (default 100) is a
 		LIMIT in the SQL, so BigQuery never sorts an unbounded set; total_rows

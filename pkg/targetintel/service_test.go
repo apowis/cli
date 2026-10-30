@@ -58,7 +58,7 @@ func TestServiceConfigurationsFilterKinds(t *testing.T) {
 		{name: "favicon md5 all digits", flag: "favicon", value: "12345678901234567890123456789012", cond: "favicon_md5 = @favicon", param: "favicon", want: "12345678901234567890123456789012"},
 		{name: "favicon sha256", flag: "favicon", value: h64, cond: "favicon_sha_256 = @favicon", param: "favicon", want: h64},
 		{name: "body hash", flag: "body-hash", value: strings.ToUpper(h64), cond: "body_sha_256 = @body_hash", param: "body_hash", want: h64},
-		{name: "snapshot hash", flag: "hash", value: " " + h64 + " ", cond: "snapshot_hash = @hash", param: "hash", want: h64},
+		{name: "snapshot hash", flag: "snapshot-hash", value: " " + h64 + " ", cond: "snapshot_hash = @snapshot_hash", param: "snapshot_hash", want: h64},
 	}
 	for _, tt := range tests {
 		sql, params, err := s.ServiceConfigurations(httpQuery(map[string]string{tt.flag: tt.value}))
@@ -94,7 +94,7 @@ func TestServiceConfigurationsNeverReadsExpensiveColumns(t *testing.T) {
 	s := Settings{Project: "p", Dataset: "d"}
 	expensive := regexp.MustCompile(`\b(body|body_b64|headers|robots_txt|security_txt|http_parsed|timeline\w*)\b`)
 	h64 := strings.Repeat("0", 64)
-	all := map[string]string{"title": "a", "server": "b", "status": "404", "favicon": "1", "body-hash": h64, "hash": h64}
+	all := map[string]string{"title": "a", "server": "b", "status": "404", "favicon": "1", "body-hash": h64, "snapshot-hash": h64}
 	for _, q := range []ServiceQuery{
 		httpQuery(all),
 		{Protocol: "http", Filters: all, LookbackDays: 365},
@@ -116,7 +116,7 @@ func TestServiceConfigurationsRefusals(t *testing.T) {
 		q    ServiceQuery
 		msg  string
 	}{
-		{name: "no filter", q: httpQuery(nil), msg: "at least one of --title, --server, --favicon, --body-hash or --hash is required"},
+		{name: "no filter", q: httpQuery(nil), msg: "at least one of --title, --server, --favicon, --body-hash or --snapshot-hash is required"},
 		{name: "blank filter", q: httpQuery(map[string]string{"title": "  "}), msg: "at least one of"},
 		{name: "status alone", q: httpQuery(map[string]string{"status": "200"}), msg: "at least one of"},
 		{name: "wildcard title", q: httpQuery(map[string]string{"title": "%%"}), msg: `--title "%%" matches everything`},
@@ -127,8 +127,8 @@ func TestServiceConfigurationsRefusals(t *testing.T) {
 		{name: "favicon garbage", q: httpQuery(map[string]string{"favicon": "0xdeadbeef"}), msg: "--favicon"},
 		{name: "favicon too wide", q: httpQuery(map[string]string{"favicon": "4294967296"}), msg: "--favicon"},
 		{name: "favicon wrong hex length", q: httpQuery(map[string]string{"favicon": "abcd"}), msg: "--favicon"},
-		{name: "hash short", q: httpQuery(map[string]string{"hash": h64[:63]}), msg: "--hash must be 64 hex characters"},
-		{name: "hash non-hex", q: httpQuery(map[string]string{"hash": strings.Repeat("g", 64)}), msg: "--hash"},
+		{name: "hash short", q: httpQuery(map[string]string{"snapshot-hash": h64[:63]}), msg: "--snapshot-hash must be 64 hex characters"},
+		{name: "hash non-hex", q: httpQuery(map[string]string{"snapshot-hash": strings.Repeat("g", 64)}), msg: "--snapshot-hash"},
 		{name: "body hash short", q: httpQuery(map[string]string{"body-hash": "abc"}), msg: "--body-hash must be 64 hex characters"},
 		{name: "days zero", q: ServiceQuery{Protocol: "http", Filters: map[string]string{"title": "x"}}, msg: "--days must be between 1 and 365"},
 		{name: "days over", q: ServiceQuery{Protocol: "http", Filters: map[string]string{"title": "x"}, LookbackDays: 366}, msg: "--days must be between 1 and 365"},

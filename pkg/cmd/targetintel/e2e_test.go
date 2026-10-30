@@ -1008,12 +1008,12 @@ func TestE2EServiceHTTP(t *testing.T) {
 		s := fakeBQ(t)
 		s.SetQuery(bqfake.Query{Schema: httpConfigSchema, Rows: httpConfigRows()})
 
-		stdout, _, err := runTI(t, output.ModeText, "service", "http", "--hash", strings.Repeat("A", 64), "--all")
+		stdout, _, err := runTI(t, output.ModeText, "service", "http", "--snapshot-hash", strings.Repeat("A", 64), "--all")
 		require.NoError(t, err)
 		assert.Contains(t, stdout, ", 2 configurations\n")
 		job := s.LastJob()
 		assert.NotContains(t, jobSQL(job), "LIMIT")
-		assert.Equal(t, map[string]any{"lookback_days": "30", "hash": strings.Repeat("a", 64)}, jobParams(job))
+		assert.Equal(t, map[string]any{"lookback_days": "30", "snapshot_hash": strings.Repeat("a", 64)}, jobParams(job))
 	})
 
 	t.Run("no match", func(t *testing.T) {
