@@ -454,6 +454,41 @@ Every `query` runs with `--max-cost` (default $1.00) sent to BigQuery as `maximu
 
 `service http` lists distinct HTTP configurations rather than hosts: it reads `http_snapshot`, one row per distinct response, for those last seen within `--days` (default 30, at most 365) that match every filter given, and returns `snapshot_hash`, `title`, `server`, `status_code`, `content_length`, `favicon_shodan_hash`, `body_sha_256`, `first_seen` and `last_seen`, newest first. At least one of `--title`, `--server` (case-insensitive substring, `%` for an explicit LIKE pattern), `--favicon`, `--body-hash` or `--snapshot-hash` is required; `--status` (100 to 599) only narrows beside one of them, since on its own it matches hundreds of millions of responses. `--favicon` picks its column by shape: a decimal integer is the Shodan (mmh3) hash, 32 hex characters MD5, 64 hex characters SHA-256. The body, headers, `robots_txt` and `security_txt` are never read, nor is `http_parsed`, whose body column bills about 1.7 TiB ($10) for 30 days: a 30-day search dry-runs at 49 GiB ($0.30) whatever the filters, and a `--snapshot-hash` lookup bills a few MiB because the table is clustered on it. Unlike the other commands, `--limit` (default 100) is a `LIMIT` in the SQL, so BigQuery never sorts tens of millions of matches to keep a hundred; `total_rows` therefore equals `returned_rows` and `truncated` is always false. The list is for narrowing down, not counting, and the text summary says when the limit was reached. `--all` drops the `LIMIT`. Text mode leaves out `body_sha_256` and `first_seen`; `--json` is the `query` payload shape plus `table` (the fully qualified snapshot table) and `query: {protocol, title, server, status, favicon, body_hash, snapshot_hash, lookback_days}`, each filter echoed as the value bound to BigQuery (a substring as its LIKE pattern, a hash lower-cased) and unset ones omitted. `service` is the home for further protocols; a lookup of the hosts serving a configuration is coming.
 
+#### Keeping agents under the cost cap
+
+When an AI agent hits exit 7 (`cost_limit_exceeded`), the error hint names the `--max-cost` value that would let the query through, and the agent will often just re-run with it. To keep raising the cap a human decision, block it with a Claude Code `PreToolUse` hook. Save this as `~/.claude/hooks/block-ti-max-cost.sh` and `chmod +x` it (requires `jq`):
+
+```sh
+#!/bin/sh
+# PreToolUse hook: refuse any shell command that tries to change the
+# target-intel cost cap, and tell Claude to ask the user instead.
+cmd=$(jq -r '.tool_input.command // empty')
+if printf '%s' "$cmd" | grep -Eq -- '--max-cost|VC_TI_MAX_COST|VC_TI_PRICE_PER_TIB'; then
+  echo "Blocked: changing the target-intel cost cap (--max-cost, VC_TI_MAX_COST, VC_TI_PRICE_PER_TIB) is not allowed. Stop and ask the user to run the command themselves." >&2
+  exit 2
+fi
+exit 0
+```
+
+Then register it in `~/.claude/settings.json` (or a project's `.claude/settings.json`):
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "~/.claude/hooks/block-ti-max-cost.sh" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Exit code 2 cancels the tool call and passes the message on stderr back to Claude, so the agent stops and asks you instead of retrying. The hook also blocks `VC_TI_MAX_COST`, which sets the cap without the flag, and `VC_TI_PRICE_PER_TIB`, because the cap is converted to bytes at that price and lowering it raises the cap. Run `/hooks` in Claude Code to confirm the hook is loaded. This is a guardrail, not a security boundary: an agent can still get around it, for example by writing the flag into a script file and running that. For a hard limit, set a BigQuery custom query quota (bytes per user per day) on the billing project.
+
 
 ### version
 
