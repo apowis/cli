@@ -139,5 +139,5 @@ func TestCommandTree(t *testing.T) {
 	for _, c := range cmd.Commands() {
 		names = append(names, c.Name())
 	}
-	assert.ElementsMatch(t, []string{"auth", "datasets", "tables", "query", "estimate", "cves", "product", "host", "service"}, names)
+	assert.ElementsMatch(t, []string{"auth", "datasets", "tables", "query", "estimate", "cves", "product", "host", "service", "usage"}, names)
 }

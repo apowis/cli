@@ -14,6 +14,12 @@ type Client struct {
 	BQ          *bigquery.Client
 	Settings    Settings
 	Credentials *Credentials
+	// Usage, when set, records every billed job so `usage` can report
+	// spend over time. Nil records nothing.
+	Usage *UsageLog
+	// OnUsageError is told when a job could not be recorded. Recording
+	// never fails the query itself.
+	OnUsageError func(error)
 }
 
 // NewClient resolves credentials and opens a BigQuery client against the

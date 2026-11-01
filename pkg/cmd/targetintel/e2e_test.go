@@ -34,11 +34,14 @@ func fakeBQ(t *testing.T) *bqfake.Server {
 	isolateEnv(t)
 	s := bqfake.New(t)
 	orig := newClient
-	newClient = func(_ context.Context, settings targetintel.Settings) (*targetintel.Client, error) {
+	newClient = func(ctx context.Context, settings targetintel.Settings) (*targetintel.Client, error) {
 		c := s.NewClient(settings.Project)
 		c.Location = settings.Location
+		client := &targetintel.Client{BQ: c, Settings: settings}
+		// The real usage log, under the isolated HOME.
+		attachUsageLog(ctx, client)
 
-		return &targetintel.Client{BQ: c, Settings: settings}, nil
+		return client, nil
 	}
 	t.Cleanup(func() { newClient = orig })
 

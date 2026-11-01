@@ -50,13 +50,15 @@ func Command() *cobra.Command {
 	cmd.AddCommand(productCommand())
 	cmd.AddCommand(hostCommand())
 	cmd.AddCommand(serviceCommand())
+	cmd.AddCommand(usageCommand())
 
 	return cmd
 }
 
-// newClient resolves credentials and opens the BigQuery client. It is a
-// variable so tests can point the commands at a fake BigQuery server.
-var newClient = targetintel.NewClient
+// newClient resolves credentials, opens the BigQuery client and attaches the
+// usage log. It is a variable so tests can point the commands at a fake
+// BigQuery server.
+var newClient = openClient
 
 // settingsFromCmd resolves Settings from the persistent flags plus any
 // per-command overrides.

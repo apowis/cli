@@ -33,6 +33,9 @@ type QueryOptions struct {
 	Limit   int
 	NoCache bool
 	Timeout time.Duration
+	// Command names the CLI command that ran the query in the usage log,
+	// for example "host" or "service http".
+	Command string
 }
 
 // Estimate is the outcome of a free dry run.
@@ -148,6 +151,9 @@ func (c *Client) Run(ctx context.Context, opts QueryOptions) (*Result, error) {
 		}
 	}
 	res.CostUSD = cost(res.BytesBilled, opts.PricePerTiB)
+	// Recorded before the rows are read: the job has billed whether or not
+	// reading them succeeds.
+	c.recordUsage(res, opts)
 
 	it, err := job.Read(ctx)
 	if err != nil {
@@ -201,6 +207,25 @@ func (c *Client) cancelJob(job *bigquery.Job, jobID string) {
 		}
 	}
 	_ = job.Cancel(ctx)
+}
+
+// recordUsage appends a finished job to the usage log, if there is one.
+func (c *Client) recordUsage(res *Result, opts QueryOptions) {
+	if c.Usage == nil {
+		return
+	}
+	err := c.Usage.Append(UsageRecord{
+		Time:        time.Now().Unix(),
+		CostUSD:     res.CostUSD,
+		BytesBilled: res.BytesBilled,
+		CacheHit:    res.CacheHit,
+		Command:     opts.Command,
+		Project:     c.Settings.Project,
+		JobID:       res.JobID,
+	})
+	if err != nil && c.OnUsageError != nil {
+		c.OnUsageError(err)
+	}
 }
 
 func cost(bytes int64, pricePerTiB float64) float64 {

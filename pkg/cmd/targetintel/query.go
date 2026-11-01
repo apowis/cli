@@ -172,6 +172,7 @@ func (f *queryFlags) options(cmd *cobra.Command, sql string) (targetintel.Settin
 		PricePerTiB: s.PricePerTiB,
 		NoCache:     f.noCache,
 		Timeout:     f.timeout,
+		Command:     usageCommandName(cmd),
 	}, nil
 }
 

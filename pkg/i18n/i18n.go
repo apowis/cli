@@ -119,6 +119,9 @@ type Copy struct {
 	TargetIntelServiceHTTPShort    string
 	TargetIntelServiceHTTPLong     string
 	TargetIntelServiceHTTPExample  string
+	TargetIntelUsageShort          string
+	TargetIntelUsageLong           string
+	TargetIntelUsageExample        string
 
 	BackupShort            string
 	BackupLong             string
@@ -506,6 +509,31 @@ var En = Copy{
 		$ vulncheck ti service http --server "mini_httpd" --status 200 --days 7
 		$ vulncheck ti service http --favicon -1132923558 --json
 		$ vulncheck ti service http --title "Index of /%" --dry-run
+	`),
+	TargetIntelUsageShort: "Show what your queries have cost today, this week or over any period",
+	TargetIntelUsageLong: heredoc.Doc(`
+		Totals the queries this CLI ran on this machine: how many, the bytes
+		BigQuery billed and their on-demand cost. Every query, host, cves,
+		product and service job is recorded as it finishes in
+		~/.config/vulncheck/target-intel/usage/, one file per month, and
+		months older than a year are deleted. Nothing is sent anywhere and no
+		Google login is needed.
+
+		The period defaults to today. --week starts on Monday, --month on the
+		first and --year on 1 January, all in local time. --since takes a
+		date or a count of days or weeks including today (7d is the last
+		seven calendar days), and --until a last date to include. --by
+		breaks the total down by day, week or month.
+
+		This is your own spend from this machine, not the project's bill.
+		Dry runs and estimates are free and not recorded; neither is a job
+		cancelled with Ctrl-C, whose partial bill is never reported back.
+	`),
+	TargetIntelUsageExample: heredoc.Doc(`
+		$ vulncheck ti usage
+		$ vulncheck ti usage --week
+		$ vulncheck ti usage --month --by day
+		$ vulncheck ti usage --since 2026-01-01 --until 2026-03-31 --by month --json
 	`),
 
 	NvdShort:            "Query the NVD API 2.0 compatible endpoints (api /rest/json)",
