@@ -29,6 +29,10 @@ type TargetIntelConfig struct {
 	Location     string `mapstructure:"location"`
 	ViewsDataset string `mapstructure:"views_dataset"`
 	Dataset      string `mapstructure:"dataset"`
+	// DailyBudgetUSD and MonthlyBudgetUSD cap what target-intel queries may
+	// spend per local day and calendar month. Zero means no budget.
+	DailyBudgetUSD   float64 `mapstructure:"daily_budget_usd"`
+	MonthlyBudgetUSD float64 `mapstructure:"monthly_budget_usd"`
 }
 
 func Init() {
@@ -82,6 +86,8 @@ func saveConfig(config *Config) error {
 	v.Set("TargetIntel.location", config.TargetIntel.Location)
 	v.Set("TargetIntel.views_dataset", config.TargetIntel.ViewsDataset)
 	v.Set("TargetIntel.dataset", config.TargetIntel.Dataset)
+	v.Set("TargetIntel.daily_budget_usd", config.TargetIntel.DailyBudgetUSD)
+	v.Set("TargetIntel.monthly_budget_usd", config.TargetIntel.MonthlyBudgetUSD)
 	return v.WriteConfigAs(fmt.Sprintf("%s/vulncheck.yaml", dir))
 }
 

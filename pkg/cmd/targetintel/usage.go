@@ -144,6 +144,8 @@ type usagePayload struct {
 	targetintel.UsageTotals
 	By      string                    `json:"by,omitempty"`
 	Buckets []targetintel.UsageBucket `json:"buckets,omitempty"`
+	// Budget is omitted when no budget is set.
+	Budget *targetintel.BudgetStatus `json:"budget,omitempty"`
 }
 
 func usageCommand() *cobra.Command {
@@ -182,6 +184,9 @@ func usageCommand() *cobra.Command {
 					return err
 				}
 			}
+			if _, payload.Budget, err = budgetStatus(); err != nil {
+				return err
+			}
 			kept := targetintel.StartOfMonth(t.UTC()).AddDate(0, -targetintel.UsageRetentionMonths, 0)
 			if p.From.Before(kept) {
 				r.Warn("the usage log keeps %d months; nothing before %s is counted", targetintel.UsageRetentionMonths, kept.In(t.Location()).Format(time.DateOnly))
@@ -218,6 +223,16 @@ func renderUsage(r *output.Renderer, p usagePeriod, u usagePayload, t time.Time)
 	r.Stat("Queries", queries)
 	r.Stat("Billed", targetintel.FormatBytes(u.BytesBilled))
 	r.Stat("Cost", targetintel.FormatCost(u.CostUSD))
+	if b := u.Budget; b != nil {
+		var parts []string
+		if b.DailyUSD > 0 {
+			parts = append(parts, targetintel.FormatCost(b.SpentTodayUSD)+" of "+targetintel.FormatCost(b.DailyUSD)+" today")
+		}
+		if b.MonthlyUSD > 0 {
+			parts = append(parts, targetintel.FormatCost(b.SpentThisMonthUSD)+" of "+targetintel.FormatCost(b.MonthlyUSD)+" this month")
+		}
+		r.Stat("Budget", strings.Join(parts, ", "))
+	}
 	if len(u.Buckets) == 0 {
 		return
 	}

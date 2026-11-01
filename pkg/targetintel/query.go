@@ -12,6 +12,8 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/iterator"
+
+	"github.com/vulncheck-oss/cli/internal/errs"
 )
 
 const tib = 1 << 40
@@ -115,8 +117,24 @@ func (c *Client) Run(ctx context.Context, opts QueryOptions) (*Result, error) {
 		return nil, ErrReadOnly
 	}
 	q := c.newQuery(opts)
-	if opts.MaxCostUSD > 0 {
-		q.MaxBytesBilled = maxBytesBilled(opts.MaxCostUSD, opts.PricePerTiB)
+	capUSD := opts.MaxCostUSD
+	// budget is set when the remaining budget, not --max-cost, is the cap,
+	// so a job stopped at it is reported as over budget.
+	var budget *BudgetStatus
+	if c.Settings.Budget.IsSet() {
+		st, err := c.budgetStatus()
+		if err != nil {
+			return nil, err
+		}
+		if st.Exceeded() {
+			return nil, classify(&BudgetError{Status: st})
+		}
+		if capUSD <= 0 || st.RemainingUSD < capUSD {
+			capUSD, budget = st.RemainingUSD, &st
+		}
+	}
+	if capUSD > 0 {
+		q.MaxBytesBilled = maxBytesBilled(capUSD, opts.PricePerTiB)
 	}
 	// The job ID is chosen here rather than by the server so a job whose
 	// insert was interrupted can still be found and cancelled.
@@ -128,7 +146,7 @@ func (c *Client) Run(ctx context.Context, opts QueryOptions) (*Result, error) {
 			c.cancelJob(nil, jobID)
 		}
 
-		return nil, classify(costLimitFromJob(err, opts))
+		return nil, c.jobError(err, opts, budget)
 	}
 
 	status, err := job.Wait(ctx)
@@ -137,10 +155,10 @@ func (c *Client) Run(ctx context.Context, opts QueryOptions) (*Result, error) {
 			c.cancelJob(job, jobID)
 		}
 
-		return nil, classify(costLimitFromJob(err, opts))
+		return nil, c.jobError(err, opts, budget)
 	}
 	if err := status.Err(); err != nil {
-		return nil, classify(costLimitFromJob(err, opts))
+		return nil, c.jobError(err, opts, budget)
 	}
 
 	res := &Result{JobID: job.ID()}
@@ -207,6 +225,32 @@ func (c *Client) cancelJob(job *bigquery.Job, jobID string) {
 		}
 	}
 	_ = job.Cancel(ctx)
+}
+
+// budgetStatus measures the budget against the usage log. It fails closed:
+// with a budget set and no readable log, nothing runs.
+func (c *Client) budgetStatus() (BudgetStatus, error) {
+	if c.Usage == nil {
+		return BudgetStatus{}, errs.New(errs.KindBudget, "a spending budget is set but the usage log is unavailable, so spend cannot be checked")
+	}
+	st, err := c.Settings.Budget.Status(c.Usage, time.Now())
+	if err != nil {
+		return BudgetStatus{}, errs.Wrap(errs.KindBudget, err, "a spending budget is set but the usage log could not be read: %v", err)
+	}
+
+	return st, nil
+}
+
+// jobError classifies a failed job. A job stopped at a cap the remaining
+// budget set is over budget, not over --max-cost.
+func (c *Client) jobError(err error, opts QueryOptions, budget *BudgetStatus) error {
+	err = costLimitFromJob(err, opts)
+	var limit *CostLimitError
+	if budget != nil && errors.As(err, &limit) {
+		err = &BudgetError{Status: *budget, Stopped: true, RequiredBytes: limit.RequiredBytes, PricePerTiB: opts.PricePerTiB}
+	}
+
+	return classify(err)
 }
 
 // recordUsage appends a finished job to the usage log, if there is one.

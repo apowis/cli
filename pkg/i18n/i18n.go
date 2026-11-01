@@ -122,6 +122,12 @@ type Copy struct {
 	TargetIntelUsageShort          string
 	TargetIntelUsageLong           string
 	TargetIntelUsageExample        string
+	TargetIntelBudgetShort         string
+	TargetIntelBudgetLong          string
+	TargetIntelBudgetExample       string
+	TargetIntelBudgetShowShort     string
+	TargetIntelBudgetSetShort      string
+	TargetIntelBudgetClearShort    string
 
 	BackupShort            string
 	BackupLong             string
@@ -535,6 +541,35 @@ var En = Copy{
 		$ vulncheck ti usage --month --by day
 		$ vulncheck ti usage --since 2026-01-01 --until 2026-03-31 --by month --json
 	`),
+	TargetIntelBudgetShort: "Set a daily or monthly limit on what queries may spend",
+	TargetIntelBudgetLong: heredoc.Doc(`
+		A budget caps what target-intel queries may spend per local day and
+		per calendar month, counted from the usage log on this machine (see
+		"usage"). Either limit can be set alone; with neither, each query is
+		capped only by --max-cost.
+
+		Before each query the remaining budget is worked out. When nothing is
+		left the query is refused without contacting BigQuery and the command
+		exits 8 (budget_exceeded). Otherwise the job's bytes-billed cap is the
+		smaller of --max-cost and what remains, so BigQuery stops a query that
+		would go over before anything is billed, and that also exits 8.
+
+		set and clear change the budget saved in vulncheck.yaml.
+		VC_TI_DAILY_BUDGET and VC_TI_MONTHLY_BUDGET set one too, for CI and
+		machines without a saved config; when both set a limit the stricter
+		one applies, so the environment can tighten a saved budget but never
+		raise it. Two queries started at the same moment can each spend what
+		remains, so a budget can be overshot by the cost of the queries
+		running in parallel.
+	`),
+	TargetIntelBudgetExample: heredoc.Doc(`
+		$ vulncheck ti budget set --daily 5 --monthly 50
+		$ vulncheck ti budget show
+		$ vulncheck ti budget clear --daily
+	`),
+	TargetIntelBudgetShowShort:  "Show the budget in force and what is left of it",
+	TargetIntelBudgetSetShort:   "Save a daily and/or monthly budget in USD",
+	TargetIntelBudgetClearShort: "Remove the saved daily and/or monthly budget",
 
 	NvdShort:            "Query the NVD API 2.0 compatible endpoints (api /rest/json)",
 	NvdCvesShort:        "Search CVEs (GET /rest/json/cves/2.0)",

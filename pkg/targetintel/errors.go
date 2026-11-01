@@ -98,6 +98,11 @@ func classify(err error) error {
 		return cost.Classified()
 	}
 
+	var budget *BudgetError
+	if errors.As(err, &budget) {
+		return budget.Classified()
+	}
+
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return errs.Wrap(errs.KindCancelled, err, "cancelled")
 	}

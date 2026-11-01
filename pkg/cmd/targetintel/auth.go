@@ -1,6 +1,8 @@
 package targetintel
 
 import (
+	"math"
+
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 
@@ -153,6 +155,8 @@ type statusPayload struct {
 	Location         string  `json:"location"`
 	LocationSource   string  `json:"location_source"`
 	MaxCostUSD       float64 `json:"max_cost_usd"`
+	DailyBudgetUSD   float64 `json:"daily_budget_usd"`
+	MonthlyBudgetUSD float64 `json:"monthly_budget_usd"`
 	Reason           string  `json:"reason,omitempty"`
 }
 
@@ -171,6 +175,10 @@ func statusCommand() *cobra.Command {
 				Location:       s.Location,
 				LocationSource: s.LocationSource,
 				MaxCostUSD:     s.MaxCostUSD,
+				// Zero when unset; NaN (an unparsable env var) would not
+				// encode, and Validate reports it as the reason instead.
+				DailyBudgetUSD:   finiteOrZero(s.Budget.DailyUSD),
+				MonthlyBudgetUSD: finiteOrZero(s.Budget.MonthlyUSD),
 			}
 			// JSON mode keeps its exit-0 contract: a bad setting is a reason,
 			// like a missing credential.
@@ -235,4 +243,12 @@ func credentialSourceLabel(c *targetintel.Credentials) string {
 	default:
 		return string(c.Source)
 	}
+}
+
+func finiteOrZero(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+
+	return v
 }

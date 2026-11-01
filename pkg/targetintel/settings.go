@@ -51,6 +51,8 @@ type Settings struct {
 	Dataset      string
 	MaxCostUSD   float64
 	PricePerTiB  float64
+	// Budget caps spend per day and month across queries; see ResolveBudget.
+	Budget Budget
 
 	// ProjectSource and LocationSource say where each value came from:
 	// "flag", "env", "config" or "default".
@@ -84,7 +86,7 @@ type Overrides struct {
 // ResolveSettings applies precedence flag > environment > config file >
 // built-in default for every setting.
 func ResolveSettings(o Overrides) Settings {
-	s := Settings{PricePerTiB: DefaultPricePerTiB, MaxCostUSD: DefaultMaxCostUSD}
+	s := Settings{PricePerTiB: DefaultPricePerTiB, MaxCostUSD: DefaultMaxCostUSD, Budget: ResolveBudget()}
 	stored := config.TargetIntel()
 
 	s.Project, s.ProjectSource = pick(o.Project, os.Getenv(EnvProject), stored.Project, DefaultProject)
@@ -186,5 +188,5 @@ func (s Settings) Validate() error {
 		return errs.Validation("%s must be a positive price in USD; got %v", EnvPricePerTiB, s.PricePerTiB)
 	}
 
-	return nil
+	return s.Budget.Validate()
 }

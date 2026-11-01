@@ -47,6 +47,11 @@ const (
 	// --max-cost. BigQuery enforces the cap as maximumBytesBilled on the bytes
 	// actually billed, and a job over it fails without charge. Exit 7.
 	KindCostLimit Kind = "cost_limit_exceeded"
+	// KindBudget means the caller's daily or monthly spending budget is used
+	// up, or a query would have gone past it. Unlike KindCostLimit, a cheaper
+	// query is not the fix: a person has to raise the budget or wait for it
+	// to reset. Exit 8.
+	KindBudget Kind = "budget_exceeded"
 )
 
 // ExitCode is the stable process exit code mapped to a Kind.
@@ -64,6 +69,8 @@ func (k Kind) ExitCode() int {
 		return 6
 	case KindCostLimit:
 		return 7
+	case KindBudget:
+		return 8
 	case KindCancelled:
 		return 130
 	default:

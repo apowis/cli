@@ -36,7 +36,7 @@ func isolateEnv(t *testing.T) string {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", home)
-	for _, env := range []string{targetintel.EnvProject, targetintel.EnvLocation, targetintel.EnvViewsDataset, targetintel.EnvDataset, targetintel.EnvMaxCost, targetintel.EnvPricePerTiB, targetintel.EnvCredentials} {
+	for _, env := range []string{targetintel.EnvProject, targetintel.EnvLocation, targetintel.EnvViewsDataset, targetintel.EnvDataset, targetintel.EnvMaxCost, targetintel.EnvPricePerTiB, targetintel.EnvCredentials, targetintel.EnvDailyBudget, targetintel.EnvMonthlyBudget} {
 		t.Setenv(env, "")
 	}
 

@@ -21,6 +21,7 @@ func TestKindExitCodes(t *testing.T) {
 		KindNotFound:     4,
 		KindRateLimited:  5,
 		KindNetwork:      6,
+		KindBudget:       8,
 		KindCancelled:    130,
 	}
 	for k, want := range cases {

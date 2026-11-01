@@ -51,6 +51,7 @@ func Command() *cobra.Command {
 	cmd.AddCommand(hostCommand())
 	cmd.AddCommand(serviceCommand())
 	cmd.AddCommand(usageCommand())
+	cmd.AddCommand(budgetCommand())
 
 	return cmd
 }
