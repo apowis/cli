@@ -44,6 +44,7 @@ func Command() *cobra.Command {
 	cmd.AddCommand(authCommand())
 	cmd.AddCommand(datasetsCommand())
 	cmd.AddCommand(tablesCommand())
+	cmd.AddCommand(routinesCommand())
 	cmd.AddCommand(queryCommand())
 	cmd.AddCommand(estimateCommand())
 	cmd.AddCommand(cvesCommand())

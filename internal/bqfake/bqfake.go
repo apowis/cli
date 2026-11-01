@@ -2,7 +2,7 @@
 //
 // It serves the requests the cloud.google.com/go/bigquery client makes for a
 // query job (jobs.insert, jobs.getQueryResults, jobs.get, jobs.cancel) and
-// for metadata (datasets.list/get, tables.list/get). Results are configured
+// for metadata (datasets.list/get, tables.list/get, routines.list/get). Results are configured
 // per test; every inserted job is recorded so tests can assert on the job
 // configuration the client sent. A request the fake does not recognise fails
 // the test, so a client library upgrade that changes its request pattern is
@@ -104,6 +104,29 @@ type Table struct {
 	LastModified           time.Time
 }
 
+// Routine is the metadata served for routines.get.
+type Routine struct {
+	// Type defaults to TABLE_VALUED_FUNCTION.
+	Type        string
+	Language    string
+	Description string
+	Arguments   []Argument
+	// ReturnType is a scalar function's result type kind, for example INT64.
+	ReturnType string
+	// ReturnColumns are a table function's output columns.
+	ReturnColumns []Argument
+	Body          string
+	Created       time.Time
+	LastModified  time.Time
+}
+
+// Argument is one routine argument or output column. Type is a type kind
+// (STRING, INT64, ...) or ARRAY<kind>.
+type Argument struct {
+	Name string
+	Type string
+}
+
 // Request is one request the fake received.
 type Request struct {
 	Method string
@@ -123,30 +146,34 @@ type Server struct {
 	t   testing.TB
 	srv *httptest.Server
 
-	mu        sync.Mutex
-	query     Query
-	handler   func(*bq.Job) Query
-	onInsert  func(*http.Request, *bq.Job)
-	jobs      map[string]*bq.Job
-	results   map[string]Query
-	inserted  []*bq.Job
-	cancelled []string
-	requests  []Request
-	datasets  map[string][]string
-	tables    map[tableKey]Table
-	tableIDs  map[[2]string][]string
+	mu         sync.Mutex
+	query      Query
+	handler    func(*bq.Job) Query
+	onInsert   func(*http.Request, *bq.Job)
+	jobs       map[string]*bq.Job
+	results    map[string]Query
+	inserted   []*bq.Job
+	cancelled  []string
+	requests   []Request
+	datasets   map[string][]string
+	tables     map[tableKey]Table
+	tableIDs   map[[2]string][]string
+	routines   map[tableKey]Routine
+	routineIDs map[[2]string][]string
 }
 
 // New starts a fake that is closed when the test ends.
 func New(t testing.TB) *Server {
 	t.Helper()
 	s := &Server{
-		t:        t,
-		jobs:     map[string]*bq.Job{},
-		results:  map[string]Query{},
-		datasets: map[string][]string{},
-		tables:   map[tableKey]Table{},
-		tableIDs: map[[2]string][]string{},
+		t:          t,
+		jobs:       map[string]*bq.Job{},
+		results:    map[string]Query{},
+		datasets:   map[string][]string{},
+		tables:     map[tableKey]Table{},
+		tableIDs:   map[[2]string][]string{},
+		routines:   map[tableKey]Routine{},
+		routineIDs: map[[2]string][]string{},
 	}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
 	s.URL = s.srv.URL
@@ -223,6 +250,16 @@ func (s *Server) AddTable(project, dataset, table string, t Table) {
 	s.tables[tableKey{project, dataset, table}] = t
 }
 
+// AddRoutine makes the routine appear in its dataset's routine list and
+// serves r for routines.get.
+func (s *Server) AddRoutine(project, dataset, routine string, r Routine) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := [2]string{project, dataset}
+	s.routineIDs[k] = append(s.routineIDs[k], routine)
+	s.routines[tableKey{project, dataset, routine}] = r
+}
+
 // Jobs returns the decoded bodies of every jobs.insert, in order.
 func (s *Server) Jobs() []*bq.Job {
 	s.mu.Lock()
@@ -287,6 +324,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.listTables(w, project, p[3])
 	case r.Method == http.MethodGet && len(p) == 6 && p[2] == "datasets" && p[4] == "tables":
 		s.getTable(w, project, p[3], p[5])
+	case r.Method == http.MethodGet && len(p) == 5 && p[2] == "datasets" && p[4] == "routines":
+		s.listRoutines(w, project, p[3])
+	case r.Method == http.MethodGet && len(p) == 6 && p[2] == "datasets" && p[4] == "routines":
+		s.getRoutine(w, project, p[3], p[5])
 	default:
 		s.unknown(w, r)
 	}
@@ -517,6 +558,64 @@ func (s *Server) getTable(w http.ResponseWriter, project, dataset, table string)
 		res.Clustering = &bq.Clustering{Fields: t.ClusteringFields}
 	}
 	writeJSON(w, res)
+}
+
+func (s *Server) listRoutines(w http.ResponseWriter, project, dataset string) {
+	s.mu.Lock()
+	ids := append([]string(nil), s.routineIDs[[2]string{project, dataset}]...)
+	s.mu.Unlock()
+	res := &bq.ListRoutinesResponse{}
+	for _, id := range ids {
+		res.Routines = append(res.Routines, &bq.Routine{
+			RoutineReference: &bq.RoutineReference{ProjectId: project, DatasetId: dataset, RoutineId: id},
+		})
+	}
+	writeJSON(w, res)
+}
+
+func (s *Server) getRoutine(w http.ResponseWriter, project, dataset, routine string) {
+	s.mu.Lock()
+	rt, ok := s.routines[tableKey{project, dataset, routine}]
+	s.mu.Unlock()
+	if !ok {
+		writeError(w, http.StatusNotFound, "notFound", "Not found: Routine "+project+":"+dataset+"."+routine)
+
+		return
+	}
+	typ := rt.Type
+	if typ == "" {
+		typ = "TABLE_VALUED_FUNCTION"
+	}
+	res := &bq.Routine{
+		RoutineReference: &bq.RoutineReference{ProjectId: project, DatasetId: dataset, RoutineId: routine},
+		RoutineType:      typ,
+		Language:         rt.Language,
+		Description:      rt.Description,
+		DefinitionBody:   rt.Body,
+		CreationTime:     rt.Created.UnixMilli(),
+		LastModifiedTime: rt.LastModified.UnixMilli(),
+	}
+	for _, a := range rt.Arguments {
+		res.Arguments = append(res.Arguments, &bq.Argument{Name: a.Name, ArgumentKind: "FIXED_TYPE", DataType: sqlType(a.Type)})
+	}
+	if rt.ReturnType != "" {
+		res.ReturnType = sqlType(rt.ReturnType)
+	}
+	if len(rt.ReturnColumns) > 0 {
+		res.ReturnTableType = &bq.StandardSqlTableType{}
+		for _, c := range rt.ReturnColumns {
+			res.ReturnTableType.Columns = append(res.ReturnTableType.Columns, &bq.StandardSqlField{Name: c.Name, Type: sqlType(c.Type)})
+		}
+	}
+	writeJSON(w, res)
+}
+
+func sqlType(kind string) *bq.StandardSqlDataType {
+	if inner, ok := strings.CutPrefix(kind, "ARRAY<"); ok {
+		return &bq.StandardSqlDataType{TypeKind: "ARRAY", ArrayElementType: sqlType(strings.TrimSuffix(inner, ">"))}
+	}
+
+	return &bq.StandardSqlDataType{TypeKind: kind}
 }
 
 func totalRows(q Query) uint64 {

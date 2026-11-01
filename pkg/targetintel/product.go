@@ -48,7 +48,7 @@ func (s Settings) ObservationsByProduct(q ProductQuery) (string, []bigquery.Quer
 			return "", nil, errs.Validation("%s %q matches every product; give at least one character besides %% and _", f[0], raw)
 		}
 	}
-	sql := "SELECT * FROM " + s.ViewsRoutine("observations_by_product") + "(@vendor, @product, @lookback_days)"
+	sql := "SELECT * FROM " + s.ViewsRoutine(RoutineProduct) + "(@vendor, @product, @lookback_days)"
 	params := []bigquery.QueryParameter{
 		{Name: "vendor", Value: vendor},
 		{Name: "product", Value: product},

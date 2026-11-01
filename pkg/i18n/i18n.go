@@ -86,48 +86,52 @@ type Copy struct {
 	NvdNextCursor       string
 	NvdFlagFullResponse string
 
-	TargetIntelShort               string
-	TargetIntelLong                string
-	TargetIntelExample             string
-	TargetIntelAuthShort           string
-	TargetIntelAuthLoginShort      string
-	TargetIntelAuthLoginLong       string
-	TargetIntelAuthLoginErrorCI    string
-	TargetIntelAuthLogoutShort     string
-	TargetIntelAuthStatusShort     string
-	TargetIntelDatasetsShort       string
-	TargetIntelDatasetsListShort   string
-	TargetIntelTablesShort         string
-	TargetIntelTablesListShort     string
-	TargetIntelTablesDescribeShort string
-	TargetIntelQueryShort          string
-	TargetIntelQueryLong           string
-	TargetIntelQueryExample        string
-	TargetIntelEstimateShort       string
-	TargetIntelEstimateLong        string
-	TargetIntelCvesShort           string
-	TargetIntelCvesLong            string
-	TargetIntelCvesExample         string
-	TargetIntelProductShort        string
-	TargetIntelProductLong         string
-	TargetIntelProductExample      string
-	TargetIntelHostShort           string
-	TargetIntelHostLong            string
-	TargetIntelHostExample         string
-	TargetIntelServiceShort        string
-	TargetIntelServiceLong         string
-	TargetIntelServiceHTTPShort    string
-	TargetIntelServiceHTTPLong     string
-	TargetIntelServiceHTTPExample  string
-	TargetIntelUsageShort          string
-	TargetIntelUsageLong           string
-	TargetIntelUsageExample        string
-	TargetIntelBudgetShort         string
-	TargetIntelBudgetLong          string
-	TargetIntelBudgetExample       string
-	TargetIntelBudgetShowShort     string
-	TargetIntelBudgetSetShort      string
-	TargetIntelBudgetClearShort    string
+	TargetIntelShort                 string
+	TargetIntelLong                  string
+	TargetIntelExample               string
+	TargetIntelAuthShort             string
+	TargetIntelAuthLoginShort        string
+	TargetIntelAuthLoginLong         string
+	TargetIntelAuthLoginErrorCI      string
+	TargetIntelAuthLogoutShort       string
+	TargetIntelAuthStatusShort       string
+	TargetIntelDatasetsShort         string
+	TargetIntelDatasetsListShort     string
+	TargetIntelTablesShort           string
+	TargetIntelTablesListShort       string
+	TargetIntelTablesDescribeShort   string
+	TargetIntelRoutinesShort         string
+	TargetIntelRoutinesListShort     string
+	TargetIntelRoutinesDescribeShort string
+	TargetIntelRoutinesDescribeLong  string
+	TargetIntelQueryShort            string
+	TargetIntelQueryLong             string
+	TargetIntelQueryExample          string
+	TargetIntelEstimateShort         string
+	TargetIntelEstimateLong          string
+	TargetIntelCvesShort             string
+	TargetIntelCvesLong              string
+	TargetIntelCvesExample           string
+	TargetIntelProductShort          string
+	TargetIntelProductLong           string
+	TargetIntelProductExample        string
+	TargetIntelHostShort             string
+	TargetIntelHostLong              string
+	TargetIntelHostExample           string
+	TargetIntelServiceShort          string
+	TargetIntelServiceLong           string
+	TargetIntelServiceHTTPShort      string
+	TargetIntelServiceHTTPLong       string
+	TargetIntelServiceHTTPExample    string
+	TargetIntelUsageShort            string
+	TargetIntelUsageLong             string
+	TargetIntelUsageExample          string
+	TargetIntelBudgetShort           string
+	TargetIntelBudgetLong            string
+	TargetIntelBudgetExample         string
+	TargetIntelBudgetShowShort       string
+	TargetIntelBudgetSetShort        string
+	TargetIntelBudgetClearShort      string
 
 	BackupShort            string
 	BackupLong             string
@@ -342,18 +346,28 @@ var En = Copy{
 		$ vulncheck target-intel estimate --from-file big-join.sql
 		$ vulncheck target-intel query --limit 10 --query "SELECT ip, port FROM anchorbreaker_prod.timeline WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 DAY) LIMIT 10"
 	`),
-	TargetIntelAuthShort:           "Manage Target Intelligence (Google) credentials",
-	TargetIntelAuthLoginShort:      "Authenticate to the Target Intelligence warehouse with a Google account",
-	TargetIntelAuthLoginLong:       "Opens a browser to sign in with Google, the same way gcloud auth login does, and stores a refresh token in the config directory. Use --no-browser to print the URL instead, for a machine without a browser.",
-	TargetIntelAuthLoginErrorCI:    "This command is interactive and cannot be run in a CI environment; set VC_TI_CREDENTIALS to a service-account key file, or pass --no-browser and complete the login from another machine",
-	TargetIntelAuthLogoutShort:     "Remove stored Target Intelligence credentials",
-	TargetIntelAuthStatusShort:     "Show the credential source, principal, billing project and cost limit",
-	TargetIntelDatasetsShort:       "List available datasets",
-	TargetIntelDatasetsListShort:   "List the datasets in the billing project",
-	TargetIntelTablesShort:         "List and describe tables",
-	TargetIntelTablesListShort:     "List the tables and views in a dataset",
-	TargetIntelTablesDescribeShort: "Show a table's schema, size, partition and cluster keys (free)",
-	TargetIntelQueryShort:          "Run a read-only SQL query under a cost cap",
+	TargetIntelAuthShort:             "Manage Target Intelligence (Google) credentials",
+	TargetIntelAuthLoginShort:        "Authenticate to the Target Intelligence warehouse with a Google account",
+	TargetIntelAuthLoginLong:         "Opens a browser to sign in with Google, the same way gcloud auth login does, and stores a refresh token in the config directory. Use --no-browser to print the URL instead, for a machine without a browser.",
+	TargetIntelAuthLoginErrorCI:      "This command is interactive and cannot be run in a CI environment; set VC_TI_CREDENTIALS to a service-account key file, or pass --no-browser and complete the login from another machine",
+	TargetIntelAuthLogoutShort:       "Remove stored Target Intelligence credentials",
+	TargetIntelAuthStatusShort:       "Show the credential source, principal, billing project and cost limit",
+	TargetIntelDatasetsShort:         "List available datasets",
+	TargetIntelDatasetsListShort:     "List the datasets in the billing project",
+	TargetIntelTablesShort:           "List and describe tables",
+	TargetIntelTablesListShort:       "List the tables and views in a dataset",
+	TargetIntelTablesDescribeShort:   "Show a table's schema, size, partition and cluster keys (free)",
+	TargetIntelRoutinesShort:         "List and describe routines (table functions such as observations_by_*)",
+	TargetIntelRoutinesListShort:     "List the routines in a dataset, the views dataset by default (free)",
+	TargetIntelRoutinesDescribeShort: "Show a routine's arguments and what it returns (free)",
+	TargetIntelRoutinesDescribeLong: heredoc.Doc(`
+		Shows a routine's type, description, arguments and what it returns:
+		a scalar type, or the columns of the table a table function returns.
+		A bare name is looked up in the views dataset. The routines that a
+		target-intel command wraps name that command. --show-sql adds the
+		routine's SQL body. Reading routine metadata is free.
+	`),
+	TargetIntelQueryShort: "Run a read-only SQL query under a cost cap",
 	TargetIntelQueryLong: heredoc.Doc(`
 		Run a read-only SQL query against Target Intelligence.
 

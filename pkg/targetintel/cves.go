@@ -57,7 +57,7 @@ func (s Settings) ObservationsByCVEs(q CVEQuery) (string, []bigquery.QueryParame
 	if !ValidMinConfidence(q.MinConfidence) {
 		return "", nil, errs.Validation("--min-confidence must be one of 10, 20, 30 or 40")
 	}
-	sql := "SELECT * FROM " + s.ViewsRoutine("observations_by_cves_scored") + "(@cves, @min_confidence, @lookback_days)"
+	sql := "SELECT * FROM " + s.ViewsRoutine(RoutineCVEs) + "(@cves, @min_confidence, @lookback_days)"
 	params := []bigquery.QueryParameter{
 		{Name: "cves", Value: q.CVEs},
 		{Name: "min_confidence", Value: int64(q.MinConfidence)},
