@@ -108,6 +108,7 @@ The CLI is designed to be safe to drive from scripts and AI agents. This section
 | `VC_TI_CREDENTIALS`                        | Path to a Google credentials JSON file (service-account key or `authorized_user`). Takes precedence over the stored `target-intel auth login` credential and Application Default Credentials; while set, `target-intel auth login` refuses. |
 | `VC_TI_MAX_COST`                           | Default per-query cost cap in USD for `target-intel` queries, enforced by BigQuery as a bytes-billed limit (flag `--max-cost` wins; built-in default `1.00`; `0` disables the cap). |
 | `VC_TI_PRICE_PER_TIB`                      | On-demand price used to turn bytes into dollars (default `6.25`). |
+| `VC_TI_DAILY_BUDGET`, `VC_TI_MONTHLY_BUDGET` | Spending budget in USD for `target-intel` queries per local day and calendar month. Can only tighten a budget saved with `target-intel budget set`, never raise it. |
 
 ### Exit codes
 
@@ -121,6 +122,7 @@ The CLI is designed to be safe to drive from scripts and AI agents. This section
 | 5    | Rate limited (HTTP 429). |
 | 6    | Network failure (DNS, connection refused, timeout). |
 | 7    | Cost limit exceeded (BigQuery stopped a `target-intel` query at the bytes-billed cap before anything was billed). |
+| 8    | Budget exceeded (the `target-intel` daily or monthly spending budget is used up, or a query would have gone past it; nothing was billed). |
 | 130  | Cancelled by SIGINT (POSIX `128 + 2`). |
 
 ### Error envelope
@@ -139,7 +141,7 @@ In `--json` mode, errors are emitted to **stdout** as:
 }
 ```
 
-`code` is one of: `internal`, `validation`, `auth_required`, `auth_invalid`, `not_found`, `rate_limited`, `network`, `bad_request`, `cost_limit_exceeded`, `cancelled`. `http_status` is omitted for non-HTTP errors. `hint` is optional remediation context, present only when the message alone isn't actionable (e.g. naming the variable that supplied a rejected token). Rendered on stderr as `hint: ...` outside `--json` mode.
+`code` is one of: `internal`, `validation`, `auth_required`, `auth_invalid`, `not_found`, `rate_limited`, `network`, `bad_request`, `cost_limit_exceeded`, `budget_exceeded`, `cancelled`. `http_status` is omitted for non-HTTP errors. `hint` is optional remediation context, present only when the message alone isn't actionable (e.g. naming the variable that supplied a rejected token). Rendered on stderr as `hint: ...` outside `--json` mode.
 
 ### Probe commands
 
@@ -429,6 +431,8 @@ vulncheck target-intel auth status  [--json]
 vulncheck target-intel datasets list [--json]
 vulncheck target-intel tables list <dataset> [--json]
 vulncheck target-intel tables describe <dataset>.<table> [--json]
+vulncheck target-intel routines list [dataset] [--json]
+vulncheck target-intel routines describe [<project>.][<dataset>.]<routine> [--show-sql] [--json]
 vulncheck target-intel estimate [--query <sql> | --from-file <path>] [--max-cost <usd>] [--json]
 vulncheck target-intel query    [--query <sql> | --from-file <path>] [--limit <n>|--all] [--max-cost <usd>] [--dry-run] [--no-cache] [--timeout <d>] [--json]
 vulncheck target-intel cves     --cves <id>[,<id>...] [--days <n>] [--min-confidence <10|20|30|40>] [--group-by <country|asn|product|version> | --counts] [--limit <n>|--all] [--max-cost <usd>] [--dry-run] [--json]
@@ -437,13 +441,14 @@ vulncheck target-intel product  [--vendor <pattern>] [--product <pattern>] [--da
 vulncheck target-intel host     <ipv4|cidr> [--days <n>] [--limit <n>|--all] [--max-cost <usd>] [--dry-run] [--json]
 vulncheck target-intel service http [--title <pattern>] [--server <pattern>] [--status <code>] [--favicon <hash>] [--body-hash <sha256>] [--snapshot-hash <hash>] [--days <n>] [--limit <n>|--all] [--max-cost <usd>] [--dry-run] [--json]
 vulncheck target-intel usage    [--today | --week | --month | --year | --since <date|Nd|Nw> [--until <date>]] [--by <day|week|month>] [--json]
+vulncheck target-intel budget   show | set [--daily <usd>] [--monthly <usd>] | clear [--daily] [--monthly] [--json]
 ```
 
 `auth login` runs the same browser flow as `gcloud auth login` (loopback redirect, PKCE) and stores a refresh token in `~/.config/vulncheck/target-intel-credentials.json` (mode 0600, Google `authorized_user` format). It also saves the billing project and location to `vulncheck.yaml` so later invocations need no flags. Credential precedence: `VC_TI_CREDENTIALS`, then the stored login, then Application Default Credentials. `auth status --json` always exits 0 and returns `{schema_version, authenticated, credential_source, principal, project, project_source, location, location_source, max_cost_usd, reason}`.
 
 Every `query` runs with `--max-cost` (default $1.00) sent to BigQuery as `maximumBytesBilled`. BigQuery enforces that cap on the bytes actually read: a job that would bill more **fails before anything is charged**, and the command exits 7 with error code `cost_limit_exceeded` and a hint naming the `--max-cost` value that would allow it. There is no dry run on the normal path: BigQuery's estimate is an upper bound that cannot see cluster pruning, so a lookup on a clustered table (every `observations_by_*` routine, `host`, `cves --counts`) can estimate hundreds of GiB and bill a few. `estimate` and `--dry-run` still return that free estimate on request and warn when it is over the cap. Only a single `SELECT` (or `WITH ... SELECT`) statement is accepted; the check is a client-side statement guard, and the credential's own BigQuery permissions remain the real boundary. `--limit` caps rows returned, not bytes scanned: put `WHERE`/`LIMIT` in the SQL to cut cost. SQL comes from `--query`, `--from-file` (`-` for stdin), or piped stdin.
 
-`query --json` returns `{schema_version, job_id, bytes_billed, cost_usd, cache_hit, total_rows, returned_rows, truncated, schema: [{name, type, mode}], rows: [{...}]}`. Timestamps are RFC 3339, `BYTES` columns are base64, `NUMERIC` values are decimal strings. `estimate --json` (and `query --dry-run --json`) returns `{schema_version, estimate, max_cost_usd, within_limit}`. `tables describe --json` returns the schema plus size, row count, partition and clustering keys and the cost of a full scan; it is free, so use it before writing SQL.
+`query --json` returns `{schema_version, job_id, bytes_billed, cost_usd, cache_hit, total_rows, returned_rows, truncated, schema: [{name, type, mode}], rows: [{...}]}`. Timestamps are RFC 3339, `BYTES` columns are base64, `NUMERIC` values are decimal strings. `estimate --json` (and `query --dry-run --json`) returns `{schema_version, estimate, max_cost_usd, within_limit}`. `tables describe --json` returns the schema plus size, row count, partition and clustering keys and the cost of a full scan; it is free, so use it before writing SQL. `routines list` lists the routines in a dataset (the views dataset by default) with their type, language, last modified date and the `target-intel` command that calls them, if any; `--json` returns `[{project, dataset, routine, type, language, description, last_modified, command}]`. `routines describe` takes `dataset.routine`, `project.dataset.routine` or a bare name in the views dataset and shows the arguments with their SQL types and what the routine returns (a scalar type, or the columns of a table function's result); `--show-sql` adds the SQL body, and `--json` returns the summary fields plus `created`, `arguments: [{name, type, mode}]`, `return_type`, `return_columns: [{name, type}]` and, with `--show-sql`, `body`. Both read metadata only and are free.
 
 `cves` wraps the `observations_by_cves_scored` routine: hosts seen in the last `--days` (default 30) whose fingerprint matches any of the CVEs at or above `--min-confidence` (default 20; 30 and 40 are confirmed, 10 adds versionless product matches). Pass every CVE in one call rather than one call each: the routine scans its inputs once however many are given. Tiers 20 and above read a nightly match snapshot: the dry run estimates about 20 GiB ($0.12) and the bill is usually a third of that, because the snapshot is clustered on CVE. Tier 10, and any CVE whose NVD mapping changed since the snapshot was built, are matched live and scan more, so `--dry-run` first when in doubt. The same `--max-cost` cap applies. Text mode shows a compact column set; `--json` returns the `query` payload shape plus `routine` and the echoed `query: {cves, min_confidence, lookback_days}`, with every column the routine returns (`matched_cve_id`, `ip`, `port`, `service`, `cpe`, `vendor`, `product`, `version`, `confidence`, `vulnerable_cves`, `epss_*`, `kev_*`, `country`, `asn`, `as_name`, `backpatched`, ...). The routines live in `anchorbreaker_views_prod` by default; override with `--views-dataset` or `VC_TI_VIEWS_DATASET`.
 
@@ -457,6 +462,8 @@ Every `query` runs with `--max-cost` (default $1.00) sent to BigQuery as `maximu
 
 `usage` (aliases `cost`, `spend`) reports what your own queries cost: the number of jobs, bytes billed and on-demand cost for today (the default), `--week` (from Monday), `--month`, `--year` or `--since` a date or a count of days or weeks including today (`7d`, `2w`), optionally `--until` a last date, all in local time. `--by day|week|month` adds a breakdown with empty periods shown as zero. Every job that `query`, `cves`, `product`, `host` or `service` runs is appended as it finishes to `~/.config/vulncheck/target-intel/usage/YYYY-MM.jsonl` (one JSON line per job: `ts` in Unix seconds, `cost_usd`, `bytes_billed`, `cache_hit`, `command`, `project`, `job_id`; files 0600), and months more than a year old are deleted. It reads only that local log, so it needs no Google login and counts only this machine, not the billing project's total. Dry runs and estimates are free and not recorded, and neither is a job cancelled with Ctrl-C, whose partial bill is never reported back. A failure to write the log warns on stderr and never fails the query. `--json` returns `{schema_version, from, to, queries, cache_hits, bytes_billed, cost_usd}` plus `by` and `buckets: [{start, queries, cache_hits, bytes_billed, cost_usd}]` with `--by`.
 
+`budget` caps what queries spend per local day and per calendar month, counted from the same local usage log as `usage`. `budget set --daily 5 --monthly 50` saves either limit or both in `vulncheck.yaml`; `budget clear` removes them; `budget show` prints the limits, what has been spent and what remains. With no budget set, nothing changes: each query is capped only by `--max-cost`. With one set, every query-running command works out what remains before starting a job. If nothing does, it refuses without contacting BigQuery and exits 8 (`budget_exceeded`), with a hint saying when the budget resets. Otherwise the job's bytes-billed cap is the smaller of `--max-cost` and the remaining budget, so BigQuery stops a query that would go over before anything is billed, and that also exits 8; `--max-cost 0` does not lift a budget. `VC_TI_DAILY_BUDGET` and `VC_TI_MONTHLY_BUDGET` set a budget for CI or a machine with no saved config; when they and the saved budget both set a limit, the stricter one applies, so the environment can never raise a budget. A budget that is set but cannot be checked (an unreadable usage log, an unparsable variable) refuses queries rather than running them. Free commands (`estimate`, `--dry-run`, metadata, `usage`, `budget`) are never blocked. The budget covers this machine only, and queries started at the same moment can each spend what remains, so it can be overshot by the cost of the queries running in parallel. `budget --json` returns `{schema_version, daily_budget_usd, daily_source, monthly_budget_usd, monthly_source, status: {spent_today_usd, spent_this_month_usd, remaining_usd, binding, resets}}`; `usage --json` carries the same `status` as `budget`, and `auth status --json` includes `daily_budget_usd` and `monthly_budget_usd`.
+
 #### Keeping agents under the cost cap
 
 When an AI agent hits exit 7 (`cost_limit_exceeded`), the error hint names the `--max-cost` value that would let the query through, and the agent will often just re-run with it. To keep raising the cap a human decision, block it with a Claude Code `PreToolUse` hook. Save this as `~/.claude/hooks/block-ti-max-cost.sh` and `chmod +x` it (requires `jq`):
@@ -464,10 +471,10 @@ When an AI agent hits exit 7 (`cost_limit_exceeded`), the error hint names the `
 ```sh
 #!/bin/sh
 # PreToolUse hook: refuse any shell command that tries to change the
-# target-intel cost cap, and tell Claude to ask the user instead.
+# target-intel cost cap or budget, and tell Claude to ask the user instead.
 cmd=$(jq -r '.tool_input.command // empty')
-if printf '%s' "$cmd" | grep -Eq -- '--max-cost|VC_TI_MAX_COST|VC_TI_PRICE_PER_TIB'; then
-  echo "Blocked: changing the target-intel cost cap (--max-cost, VC_TI_MAX_COST, VC_TI_PRICE_PER_TIB) is not allowed. Stop and ask the user to run the command themselves." >&2
+if printf '%s' "$cmd" | grep -Eq -- '--max-cost|VC_TI_MAX_COST|VC_TI_PRICE_PER_TIB|budget +(set|clear)|vulncheck\.yaml'; then
+  echo "Blocked: changing the target-intel cost cap or budget (--max-cost, VC_TI_MAX_COST, VC_TI_PRICE_PER_TIB, budget set/clear, vulncheck.yaml) is not allowed. Stop and ask the user to run the command themselves." >&2
   exit 2
 fi
 exit 0
@@ -490,7 +497,7 @@ Then register it in `~/.claude/settings.json` (or a project's `.claude/settings.
 }
 ```
 
-Exit code 2 cancels the tool call and passes the message on stderr back to Claude, so the agent stops and asks you instead of retrying. The hook also blocks `VC_TI_MAX_COST`, which sets the cap without the flag, and `VC_TI_PRICE_PER_TIB`, because the cap is converted to bytes at that price and lowering it raises the cap. Run `/hooks` in Claude Code to confirm the hook is loaded. This is a guardrail, not a security boundary: an agent can still get around it, for example by writing the flag into a script file and running that. For a hard limit, set a BigQuery custom query quota (bytes per user per day) on the billing project.
+Exit code 2 cancels the tool call and passes the message on stderr back to Claude, so the agent stops and asks you instead of retrying. The hook also blocks `VC_TI_MAX_COST`, which sets the cap without the flag, and `VC_TI_PRICE_PER_TIB`, because the cap is converted to bytes at that price and lowering it raises the cap. It blocks `budget set` and `budget clear`, and any command naming `vulncheck.yaml` where the budget is saved; exit 8 (`budget_exceeded`) means stop and ask, so an agent should never be the one to raise a budget. The budget environment variables need no blocking, since they can only tighten it. Run `/hooks` in Claude Code to confirm the hook is loaded. This is a guardrail, not a security boundary: an agent can still get around it, for example by writing the flag into a script file and running that. For a hard limit, set a BigQuery custom query quota (bytes per user per day) on the billing project.
 
 
 ### version
